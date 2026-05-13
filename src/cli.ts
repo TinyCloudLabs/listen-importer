@@ -1,6 +1,11 @@
 #!/usr/bin/env bun
 import { mkdir } from "node:fs/promises";
 import { getConfig } from "./config";
+import {
+  downsamplePending,
+  parseDownsampleFormat,
+  type DownsampleFormat,
+} from "./downsample";
 import { openStore } from "./db";
 import { cloneRecording, detectRecorder, scanRecorder } from "./media";
 import { authStatus, createDelegation, type TcOptions } from "./tc";
@@ -21,6 +26,7 @@ async function main(): Promise<void> {
     case "init": {
       await mkdir(config.homeDir, { recursive: true });
       await mkdir(config.mediaDir, { recursive: true });
+      await mkdir(config.downsampledDir, { recursive: true });
       await mkdir(config.transcriptsDir, { recursive: true });
       const store = await openStore(config);
       store.close();
@@ -97,6 +103,9 @@ async function main(): Promise<void> {
         console.log(
           `Transcripts: ${counts.transcript_ready} ready, ${counts.transcript_missing} missing`,
         );
+        console.log(
+          `Downsampled: ${counts.downsampled_ready} ready, ${counts.downsampled_missing} missing`,
+        );
       }
       break;
     }
@@ -111,6 +120,21 @@ async function main(): Promise<void> {
           `${row.status.padEnd(9)} ${row.file_name} ${row.sha256.slice(0, 12)}`,
         );
       }
+      break;
+    }
+
+    case "downsample": {
+      const limit = numberFlag(args, "limit") ?? 25;
+      const store = await openStore(config);
+      const result = await downsamplePending(config, store, {
+        limit,
+        force: Boolean(args.flags.force),
+        format: formatFlag(args),
+        bitrate: stringFlag(args, "bitrate"),
+        sampleRate: numberFlag(args, "sample-rate"),
+      });
+      store.close();
+      console.log(`Downsampled ${result.downsampled}; failed ${result.failed}`);
       break;
     }
 
@@ -136,6 +160,7 @@ async function main(): Promise<void> {
       const result = await uploadPending(config, store, limit, {
         ...tcOptions(args),
         publish: Boolean(args.flags.publish),
+        useDownsampled: Boolean(args.flags["use-downsampled"]),
       });
       store.close();
       console.log(
@@ -149,6 +174,7 @@ async function main(): Promise<void> {
       console.log(`State: ${config.homeDir}`);
       console.log(`Database: ${config.dbPath}`);
       console.log(`Media: ${config.mediaDir}`);
+      console.log(`Downsampled: ${config.downsampledDir}`);
       console.log(`Transcripts: ${config.transcriptsDir}`);
       console.log(`Listen SQL DB: ${config.listenSqlDb}`);
       console.log(`Listen KV prefix: ${config.listenKvPrefix}`);
@@ -225,6 +251,10 @@ function providerFlag(args: ParsedArgs): TranscriptionProvider | undefined {
   throw new Error("--provider must be deepgram or assemblyai");
 }
 
+function formatFlag(args: ParsedArgs): DownsampleFormat | undefined {
+  return parseDownsampleFormat(stringFlag(args, "format"));
+}
+
 function printHelp(): void {
   console.log(`listen-importer
 
@@ -235,8 +265,9 @@ Usage:
   listen-importer scan <path> [--recorder mic-mini|generic] [--dry-run]
   listen-importer status [--json]
   listen-importer list [--limit n]
+  listen-importer downsample [--limit n] [--format mp3|m4a|wav] [--bitrate 64k] [--sample-rate 16000] [--force]
   listen-importer transcribe [--limit n] [--provider deepgram|assemblyai] [--api-key key] [--force]
-  listen-importer upload [--limit n] [--publish] [--profile name] [--host url]
+  listen-importer upload [--limit n] [--publish] [--use-downsampled] [--profile name] [--host url]
   listen-importer doctor
 `);
 }

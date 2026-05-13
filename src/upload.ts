@@ -2,6 +2,7 @@ import { basename } from "node:path";
 import type { AppConfig } from "./config";
 import { remoteKey } from "./config";
 import type { ImporterStore, RecordingRow } from "./db";
+import { audioSourceFor, type AudioSource } from "./downsample";
 import type { TranscriptSegment } from "./transcription";
 import { putKvFile, putKvString, sqlExecute, type TcOptions } from "./tc";
 
@@ -47,6 +48,7 @@ const PARTICIPANT_TABLE_SQL = `CREATE TABLE IF NOT EXISTS participant (
 
 export interface UploadOptions extends TcOptions {
   publish?: boolean;
+  useDownsampled?: boolean;
 }
 
 export interface UploadResult {
@@ -69,19 +71,21 @@ export async function uploadPending(
 
   for (const row of rows) {
     try {
-      const mediaKey = mediaKeyFor(config, row);
+      const audio = audioSourceFor(row, Boolean(options.useDownsampled));
+      const mediaKey = mediaKeyFor(config, row, audio);
       const metadataKey = metadataKeyFor(config, row);
       const transcriptImportKey = row.transcript_path
         ? transcriptImportKeyFor(config, row)
         : null;
       const metadata = metadataFor(
         row,
+        audio,
         mediaKey,
         metadataKey,
         transcriptImportKey,
       );
 
-      putKvFile(mediaKey, row.local_path, options);
+      putKvFile(mediaKey, audio.path, options);
       if (row.transcript_path && transcriptImportKey) {
         putKvFile(transcriptImportKey, row.transcript_path, options);
         store.markTranscriptUploaded(row.id, transcriptImportKey);
@@ -90,6 +94,7 @@ export async function uploadPending(
       insertRemoteImporterRow(
         config,
         row,
+        audio,
         mediaKey,
         metadataKey,
         transcriptImportKey,
@@ -102,6 +107,7 @@ export async function uploadPending(
         const conversationId = await publishConversation(
           config,
           row,
+          audio,
           mediaKey,
           metadataKey,
           transcriptImportKey,
@@ -137,6 +143,7 @@ function ensureConversationSchema(config: AppConfig, options: TcOptions): void {
 function insertRemoteImporterRow(
   config: AppConfig,
   row: RecordingRow,
+  audio: AudioSource,
   mediaKey: string,
   metadataKey: string,
   transcriptImportKey: string | null,
@@ -154,8 +161,8 @@ function insertRemoteImporterRow(
       row.file_name,
       row.recorder,
       row.sha256,
-      row.size_bytes,
-      row.content_type,
+      audio.sizeBytes,
+      audio.contentType,
       row.recorded_at,
       row.source_path,
       mediaKey,
@@ -172,6 +179,7 @@ function insertRemoteImporterRow(
 async function publishConversation(
   config: AppConfig,
   row: RecordingRow,
+  audio: AudioSource,
   mediaKey: string,
   metadataKey: string,
   transcriptImportKey: string | null,
@@ -192,11 +200,16 @@ async function publishConversation(
     original_source_path: row.source_path,
     audio_kv_key: mediaKey,
     audio_metadata_kv_key: metadataKey,
+    audio_source_kind: audio.kind,
     transcript_kv_key: transcriptImportKey,
     transcription_provider: row.transcription_provider,
     transcribed_at: row.transcribed_at,
-    audio_content_type: row.content_type,
-    audio_size_bytes: row.size_bytes,
+    audio_content_type: audio.contentType,
+    audio_size_bytes: audio.sizeBytes,
+    original_audio_content_type: row.content_type,
+    original_audio_size_bytes: row.size_bytes,
+    downsampled_audio_path: row.downsampled_path,
+    downsampled_audio_size_bytes: row.downsampled_size_bytes,
     sha256: row.sha256,
     recorder: row.recorder,
   };
@@ -234,6 +247,7 @@ async function publishConversation(
 
 function metadataFor(
   row: RecordingRow,
+  audio: AudioSource,
   mediaKey: string,
   metadataKey: string,
   transcriptKey: string | null,
@@ -243,8 +257,13 @@ function metadataFor(
     fileName: row.file_name,
     recorder: row.recorder,
     sha256: row.sha256,
-    sizeBytes: row.size_bytes,
-    contentType: row.content_type,
+    sizeBytes: audio.sizeBytes,
+    contentType: audio.contentType,
+    mediaSourceKind: audio.kind,
+    originalSizeBytes: row.size_bytes,
+    originalContentType: row.content_type,
+    downsampledPath: row.downsampled_path,
+    downsampledSizeBytes: row.downsampled_size_bytes,
     recordedAt: row.recorded_at,
     modifiedAt: row.modified_at,
     sourcePath: row.source_path,
@@ -259,10 +278,14 @@ function metadataFor(
   };
 }
 
-function mediaKeyFor(config: AppConfig, row: RecordingRow): string {
+function mediaKeyFor(
+  config: AppConfig,
+  row: RecordingRow,
+  audio: AudioSource,
+): string {
   return remoteKey(
     config,
-    `importer/media/${row.sha256.slice(0, 2)}/${row.sha256}${row.extension}`,
+    `importer/media/${row.sha256.slice(0, 2)}/${row.sha256}${audio.extension}`,
   );
 }
 

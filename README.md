@@ -17,6 +17,7 @@ Local state defaults to:
 ~/.listen-importer/
   listen-importer.sqlite
   media/
+  downsampled/
   transcripts/
 ```
 
@@ -34,9 +35,10 @@ Remote defaults:
 listen-importer init
 listen-importer auth
 listen-importer scan /Volumes/MIC\ MINI
+listen-importer downsample
 listen-importer transcribe
 listen-importer status
-listen-importer upload --publish
+listen-importer upload --publish --use-downsampled
 ```
 
 Transcription uses Deepgram or AssemblyAI:
@@ -48,6 +50,8 @@ ASSEMBLYAI_API_KEY=... listen-importer transcribe --provider assemblyai
 
 `upload --publish` makes recordings visible in Listen as `source = recorder`. When a transcript exists locally, it writes that transcript to the Listen transcript KV path for the conversation.
 
+Downsampling is non-destructive. Originals stay in `media/`; smaller derived files are written to `downsampled/`. Transcription automatically prefers downsampled audio when it exists. Uploads use originals by default, or downsampled audio with `--use-downsampled`.
+
 ## Commands
 
 ```text
@@ -56,8 +60,9 @@ listen-importer auth [--profile name] [--host url]
 listen-importer permissions [--to did] [--expiry 30d]
 listen-importer scan <path> [--recorder mic-mini|generic] [--dry-run]
 listen-importer status [--json]
+listen-importer downsample [--limit n] [--format mp3|m4a|wav] [--bitrate 64k] [--sample-rate 16000] [--force]
 listen-importer transcribe [--limit n] [--provider deepgram|assemblyai] [--api-key key] [--force]
-listen-importer upload [--limit n] [--publish] [--profile name] [--host url]
+listen-importer upload [--limit n] [--publish] [--use-downsampled] [--profile name] [--host url]
 listen-importer list [--limit n]
 listen-importer doctor
 ```

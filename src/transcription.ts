@@ -2,6 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { AppConfig } from "./config";
 import type { ImporterStore, RecordingRow } from "./db";
+import { audioSourceFor } from "./downsample";
 
 export type TranscriptionProvider = "deepgram" | "assemblyai";
 
@@ -224,6 +225,7 @@ async function transcribeWithDeepgram(
     utterances: "true",
   });
   if (options.language) params.set("language", options.language);
+  const audio = audioSourceFor(row, true);
 
   const response = await fetch(
     `https://api.deepgram.com/v1/listen?${params.toString()}`,
@@ -231,9 +233,9 @@ async function transcribeWithDeepgram(
       method: "POST",
       headers: {
         Authorization: `Token ${apiKey}`,
-        "Content-Type": row.content_type,
+        "Content-Type": audio.contentType,
       },
-      body: Bun.file(row.local_path),
+      body: Bun.file(audio.path),
     },
   );
 
@@ -251,13 +253,14 @@ async function transcribeWithAssemblyAI(
   apiKey: string,
   options: TranscribeOptions,
 ): Promise<NormalizedTranscript> {
+  const audio = audioSourceFor(row, true);
   const upload = await fetch("https://api.assemblyai.com/v2/upload", {
     method: "POST",
     headers: {
       authorization: apiKey,
       "Content-Type": "application/octet-stream",
     },
-    body: Bun.file(row.local_path),
+    body: Bun.file(audio.path),
   });
 
   if (!upload.ok) {

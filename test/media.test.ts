@@ -16,6 +16,7 @@ describe("media scanning", () => {
     tempDir = await mkdtemp(join(tmpdir(), "listen-importer-"));
     await mkdir(join(tempDir, "REC"), { recursive: true });
     await writeFile(join(tempDir, "REC", "20260513_101112.WAV"), "audio");
+    await writeFile(join(tempDir, "REC", "._20260513_101112.WAV"), "metadata");
     await writeFile(join(tempDir, "REC", "notes.txt"), "nope");
 
     const files = await scanRecorder(tempDir, "mic-mini");

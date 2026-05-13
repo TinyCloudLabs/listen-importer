@@ -20,6 +20,7 @@ describe("ImporterStore", () => {
       homeDir: tempDir,
       dbPath: join(tempDir, "state.sqlite"),
       mediaDir: join(tempDir, "media"),
+      downsampledDir: join(tempDir, "downsampled"),
       transcriptsDir: join(tempDir, "transcripts"),
       listenSqlDb: "test-db",
       listenKvPrefix: "test-prefix",
@@ -51,7 +52,18 @@ describe("ImporterStore", () => {
       failed: 0,
       transcript_ready: 0,
       transcript_missing: 1,
+      downsampled_ready: 0,
+      downsampled_missing: 1,
     });
+    store.markDownsampled("sha", {
+      path: join(tempDir, "downsampled", "sha.mp3"),
+      contentType: "audio/mpeg",
+      sizeBytes: 2,
+      format: "mp3",
+      bitrate: "64k",
+      sampleRate: 16000,
+    });
+    expect(store.counts().downsampled_ready).toBe(1);
     store.markTranscribed("sha", {
       provider: "deepgram",
       transcriptPath: join(tempDir, "transcripts", "sha.json"),

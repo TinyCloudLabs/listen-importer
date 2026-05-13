@@ -52,6 +52,7 @@ export async function scanRecorder(
       }
 
       if (!entry.isFile()) continue;
+      if (entry.name.startsWith("._")) continue;
       const sourcePath = join(dir, entry.name);
       const extension = extname(entry.name).toLowerCase();
       if (!AUDIO_EXTENSIONS.has(extension)) continue;
