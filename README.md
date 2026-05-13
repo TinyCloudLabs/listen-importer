@@ -50,7 +50,7 @@ ASSEMBLYAI_API_KEY=... listen-importer transcribe --provider assemblyai
 
 `upload --publish` makes recordings visible in Listen as `source = recorder`. When a transcript exists locally, it writes that transcript to the Listen transcript KV path for the conversation.
 
-Downsampling is non-destructive. Originals stay in `media/`; smaller derived files are written to `downsampled/`. Transcription automatically prefers downsampled audio when it exists. Uploads use originals by default, or downsampled audio with `--use-downsampled`.
+Downsampling is non-destructive. Originals stay in `media/`; smaller derived files are written to `downsampled/`. Transcription automatically prefers downsampled audio when it exists. Uploads use originals by default, or downsampled audio with `--use-downsampled`. Use `upload --publish --transcripts-only` when you only need Listen conversation rows and transcript blobs.
 
 ## Commands
 
@@ -62,7 +62,7 @@ listen-importer scan <path> [--recorder mic-mini|generic] [--dry-run]
 listen-importer status [--json]
 listen-importer downsample [--limit n] [--format mp3|m4a|wav] [--bitrate 64k] [--sample-rate 16000] [--force]
 listen-importer transcribe [--limit n] [--provider deepgram|assemblyai] [--api-key key] [--force]
-listen-importer upload [--limit n] [--publish] [--use-downsampled] [--profile name] [--host url]
+listen-importer upload [--limit n] [--publish] [--use-downsampled] [--transcripts-only] [--profile name] [--host url]
 listen-importer list [--limit n]
 listen-importer doctor
 ```

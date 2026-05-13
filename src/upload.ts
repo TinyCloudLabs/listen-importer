@@ -49,6 +49,7 @@ const PARTICIPANT_TABLE_SQL = `CREATE TABLE IF NOT EXISTS participant (
 export interface UploadOptions extends TcOptions {
   publish?: boolean;
   useDownsampled?: boolean;
+  transcriptsOnly?: boolean;
 }
 
 export interface UploadResult {
@@ -63,7 +64,10 @@ export async function uploadPending(
   limit: number,
   options: UploadOptions,
 ): Promise<UploadResult> {
-  ensureRemoteImporterSchema(config, options);
+  if (options.transcriptsOnly && !options.publish) {
+    throw new Error("--transcripts-only requires --publish");
+  }
+  if (!options.transcriptsOnly) ensureRemoteImporterSchema(config, options);
   if (options.publish) ensureConversationSchema(config, options);
 
   const rows = store.pendingUpload(limit, Boolean(options.publish));
@@ -72,6 +76,21 @@ export async function uploadPending(
   for (const row of rows) {
     try {
       const audio = audioSourceFor(row, Boolean(options.useDownsampled));
+      if (options.transcriptsOnly) {
+        const conversationId = await publishConversation(
+          config,
+          row,
+          audio,
+          null,
+          null,
+          null,
+          options,
+        );
+        store.markPublished(row.id, conversationId);
+        result.published += 1;
+        continue;
+      }
+
       const mediaKey = mediaKeyFor(config, row, audio);
       const metadataKey = metadataKeyFor(config, row);
       const transcriptImportKey = row.transcript_path
@@ -144,8 +163,8 @@ function insertRemoteImporterRow(
   config: AppConfig,
   row: RecordingRow,
   audio: AudioSource,
-  mediaKey: string,
-  metadataKey: string,
+  mediaKey: string | null,
+  metadataKey: string | null,
   transcriptImportKey: string | null,
   options: TcOptions,
 ): void {
@@ -180,8 +199,8 @@ async function publishConversation(
   config: AppConfig,
   row: RecordingRow,
   audio: AudioSource,
-  mediaKey: string,
-  metadataKey: string,
+  mediaKey: string | null,
+  metadataKey: string | null,
   transcriptImportKey: string | null,
   options: TcOptions,
 ): Promise<string> {
@@ -214,11 +233,15 @@ async function publishConversation(
     recorder: row.recorder,
   };
 
-  putKvString(
-    remoteKey(config, `transcript/${conversationId}`),
-    JSON.stringify(transcript),
-    options,
+  const conversationTranscriptKey = remoteKey(
+    config,
+    `transcript/${conversationId}`,
   );
+  if (row.transcript_path) {
+    putKvFile(conversationTranscriptKey, row.transcript_path, options);
+  } else {
+    putKvString(conversationTranscriptKey, JSON.stringify(transcript), options);
+  }
   sqlExecute(
     config.listenSqlDb,
     `INSERT OR REPLACE INTO conversation (
