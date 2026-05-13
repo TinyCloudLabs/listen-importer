@@ -1,7 +1,7 @@
 import { mkdir } from "node:fs/promises";
 import { Database } from "bun:sqlite";
 import type { AppConfig } from "./config";
-import type { ClonedRecording } from "./media";
+import type { ClonedRecording, RecorderFile } from "./media";
 
 export type RecordingStatus = "cloned" | "uploaded" | "published" | "failed";
 
@@ -238,6 +238,17 @@ export class ImporterStore {
          LIMIT ?`,
       )
       .all(limit) as RecordingRow[];
+  }
+
+  hasSourceSnapshot(recording: RecorderFile): boolean {
+    const row = this.db
+      .query(
+        `SELECT 1 FROM recordings
+         WHERE source_path = ? AND size_bytes = ? AND modified_at = ?
+         LIMIT 1`,
+      )
+      .get(recording.sourcePath, recording.sizeBytes, recording.modifiedAt);
+    return row !== null;
   }
 
   counts(): StatusCounts {

@@ -76,7 +76,12 @@ async function main(): Promise<void> {
       const store = await openStore(config);
       let created = 0;
       let updated = 0;
+      let skipped = 0;
       for (const file of files) {
+        if (store.hasSourceSnapshot(file)) {
+          skipped += 1;
+          continue;
+        }
         const cloned = await cloneRecording(config, file);
         const result = store.upsertRecording(cloned);
         if (result === "created") created += 1;
@@ -84,7 +89,7 @@ async function main(): Promise<void> {
       }
       store.close();
       console.log(
-        `Scanned ${files.length} audio file(s): ${created} new, ${updated} updated`,
+        `Scanned ${files.length} audio file(s): ${created} new, ${updated} updated, ${skipped} unchanged`,
       );
       break;
     }

@@ -41,9 +41,16 @@ describe("ImporterStore", () => {
     };
 
     expect(store.upsertRecording(recording)).toBe("created");
+    expect(store.hasSourceSnapshot(recording)).toBe(true);
     expect(store.upsertRecording({ ...recording, fileName: "B.WAV" })).toBe(
       "updated",
     );
+    expect(
+      store.hasSourceSnapshot({
+        ...recording,
+        modifiedAt: new Date(1).toISOString(),
+      }),
+    ).toBe(false);
     expect(store.counts()).toEqual({
       total: 1,
       cloned: 1,
