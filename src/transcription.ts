@@ -319,8 +319,11 @@ async function transcribeWithAssemblyAI(
 
     const body = (await poll.json()) as { status?: string; error?: string };
     if (body.status === "completed") return normalizeAssemblyAIResponse(body);
-    if (body.status === "error")
+    if (body.status === "error") {
+      if (isNoSpeechError(body.error))
+        return emptyAssemblyTranscript(submitted.id);
       throw new Error(body.error ?? "AssemblyAI transcription failed");
+    }
   }
 
   throw new Error(
@@ -389,6 +392,25 @@ function assemblySpeechModels(model: string | undefined): string[] {
     .map((value) => value.trim())
     .filter(Boolean);
   return models.length > 0 ? models : DEFAULT_ASSEMBLY_SPEECH_MODELS;
+}
+
+function emptyAssemblyTranscript(providerJobId: string): NormalizedTranscript {
+  return {
+    provider: "assemblyai",
+    providerJobId,
+    text: "",
+    segments: [],
+    durationSecs: null,
+  };
+}
+
+function isNoSpeechError(error: string | undefined): boolean {
+  if (typeof error !== "string") return false;
+  const normalized = error.toLowerCase();
+  return (
+    normalized.includes("no spoken audio") ||
+    normalized.includes("does not appear to contain audio")
+  );
 }
 
 function maxEndTime(
