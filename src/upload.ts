@@ -1,0 +1,231 @@
+import { basename } from "node:path";
+import type { AppConfig } from "./config";
+import { remoteKey } from "./config";
+import type { ImporterStore, RecordingRow } from "./db";
+import { putKvFile, putKvString, sqlExecute, type TcOptions } from "./tc";
+
+const IMPORTER_TABLE_SQL = `CREATE TABLE IF NOT EXISTS listen_importer_recording (
+  id TEXT PRIMARY KEY,
+  file_name TEXT NOT NULL,
+  recorder TEXT NOT NULL,
+  sha256 TEXT NOT NULL,
+  size_bytes INTEGER NOT NULL,
+  content_type TEXT NOT NULL,
+  recorded_at TEXT,
+  local_source_path TEXT,
+  media_kv_key TEXT NOT NULL,
+  metadata_kv_key TEXT NOT NULL,
+  uploaded_at TEXT NOT NULL,
+  status TEXT NOT NULL
+)`;
+
+const CONVERSATION_TABLE_SQL = `CREATE TABLE IF NOT EXISTS conversation (
+  id              TEXT PRIMARY KEY,
+  title           TEXT,
+  source          TEXT NOT NULL,
+  source_id       TEXT,
+  source_url      TEXT,
+  started_at      TEXT,
+  ended_at        TEXT,
+  duration_secs   REAL,
+  summary         TEXT,
+  metadata        TEXT,
+  created_at      TEXT NOT NULL,
+  updated_at      TEXT NOT NULL
+)`;
+
+const PARTICIPANT_TABLE_SQL = `CREATE TABLE IF NOT EXISTS participant (
+  id              TEXT PRIMARY KEY,
+  conversation_id TEXT NOT NULL,
+  name            TEXT NOT NULL,
+  email           TEXT,
+  speaker_label   TEXT
+)`;
+
+export interface UploadOptions extends TcOptions {
+  publish?: boolean;
+}
+
+export interface UploadResult {
+  uploaded: number;
+  published: number;
+  failed: number;
+}
+
+export async function uploadPending(
+  config: AppConfig,
+  store: ImporterStore,
+  limit: number,
+  options: UploadOptions,
+): Promise<UploadResult> {
+  ensureRemoteImporterSchema(config, options);
+  if (options.publish) ensureConversationSchema(config, options);
+
+  const rows = store.pendingUpload(limit);
+  const result: UploadResult = { uploaded: 0, published: 0, failed: 0 };
+
+  for (const row of rows) {
+    try {
+      const mediaKey = mediaKeyFor(config, row);
+      const metadataKey = metadataKeyFor(config, row);
+      const metadata = metadataFor(row, mediaKey, metadataKey);
+
+      putKvFile(mediaKey, row.local_path, options);
+      putKvString(metadataKey, JSON.stringify(metadata), options);
+      insertRemoteImporterRow(config, row, mediaKey, metadataKey, options);
+      store.markUploaded(row.id, mediaKey, metadataKey);
+      result.uploaded += 1;
+
+      if (options.publish) {
+        const conversationId = publishConversation(
+          config,
+          row,
+          mediaKey,
+          metadataKey,
+          options,
+        );
+        store.markPublished(row.id, conversationId);
+        result.published += 1;
+      }
+    } catch (err) {
+      result.failed += 1;
+      store.markFailed(
+        row.id,
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+  }
+
+  return result;
+}
+
+function ensureRemoteImporterSchema(
+  config: AppConfig,
+  options: TcOptions,
+): void {
+  sqlExecute(config.listenSqlDb, IMPORTER_TABLE_SQL, [], options);
+}
+
+function ensureConversationSchema(config: AppConfig, options: TcOptions): void {
+  sqlExecute(config.listenSqlDb, CONVERSATION_TABLE_SQL, [], options);
+  sqlExecute(config.listenSqlDb, PARTICIPANT_TABLE_SQL, [], options);
+}
+
+function insertRemoteImporterRow(
+  config: AppConfig,
+  row: RecordingRow,
+  mediaKey: string,
+  metadataKey: string,
+  options: TcOptions,
+): void {
+  sqlExecute(
+    config.listenSqlDb,
+    `INSERT OR REPLACE INTO listen_importer_recording (
+      id, file_name, recorder, sha256, size_bytes, content_type, recorded_at,
+      local_source_path, media_kv_key, metadata_kv_key, uploaded_at, status
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      row.id,
+      row.file_name,
+      row.recorder,
+      row.sha256,
+      row.size_bytes,
+      row.content_type,
+      row.recorded_at,
+      row.source_path,
+      mediaKey,
+      metadataKey,
+      new Date().toISOString(),
+      "uploaded",
+    ],
+    options,
+  );
+}
+
+function publishConversation(
+  config: AppConfig,
+  row: RecordingRow,
+  mediaKey: string,
+  metadataKey: string,
+  options: TcOptions,
+): string {
+  const conversationId = `rec-${row.sha256.slice(0, 24)}`;
+  const now = new Date().toISOString();
+  const startedAt = row.recorded_at ?? row.modified_at ?? now;
+  const metadata = {
+    import_type: "recorder-audio",
+    importer: "listen-importer",
+    importer_recording_id: row.id,
+    original_file_name: row.file_name,
+    original_source_path: row.source_path,
+    audio_kv_key: mediaKey,
+    audio_metadata_kv_key: metadataKey,
+    audio_content_type: row.content_type,
+    audio_size_bytes: row.size_bytes,
+    sha256: row.sha256,
+    recorder: row.recorder,
+  };
+
+  putKvString(remoteKey(config, `transcript/${conversationId}`), "[]", options);
+  sqlExecute(
+    config.listenSqlDb,
+    `INSERT OR REPLACE INTO conversation (
+      id, title, source, source_id, source_url, started_at, ended_at, duration_secs,
+      summary, metadata, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      conversationId,
+      titleFor(row),
+      "recorder",
+      `listen-importer:${row.sha256}`,
+      null,
+      startedAt,
+      null,
+      null,
+      null,
+      JSON.stringify(metadata),
+      now,
+      now,
+    ],
+    options,
+  );
+  return conversationId;
+}
+
+function metadataFor(
+  row: RecordingRow,
+  mediaKey: string,
+  metadataKey: string,
+): Record<string, unknown> {
+  return {
+    id: row.id,
+    fileName: row.file_name,
+    recorder: row.recorder,
+    sha256: row.sha256,
+    sizeBytes: row.size_bytes,
+    contentType: row.content_type,
+    recordedAt: row.recorded_at,
+    modifiedAt: row.modified_at,
+    sourcePath: row.source_path,
+    localPath: row.local_path,
+    mediaKvKey: mediaKey,
+    metadataKvKey: metadataKey,
+    uploadedAt: new Date().toISOString(),
+  };
+}
+
+function mediaKeyFor(config: AppConfig, row: RecordingRow): string {
+  return remoteKey(
+    config,
+    `importer/media/${row.sha256.slice(0, 2)}/${row.sha256}${row.extension}`,
+  );
+}
+
+function metadataKeyFor(config: AppConfig, row: RecordingRow): string {
+  return remoteKey(config, `importer/metadata/${row.sha256}.json`);
+}
+
+function titleFor(row: RecordingRow): string {
+  const stem = basename(row.file_name, row.extension).replace(/[_-]+/g, " ");
+  return stem.trim() || row.file_name;
+}
