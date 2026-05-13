@@ -8,6 +8,7 @@ export interface AppConfig {
   homeDir: string;
   dbPath: string;
   mediaDir: string;
+  transcriptsDir: string;
   listenSqlDb: string;
   listenKvPrefix: string;
 }
@@ -26,6 +27,7 @@ export function getConfig(): AppConfig {
     homeDir,
     dbPath: join(homeDir, "listen-importer.sqlite"),
     mediaDir: join(homeDir, "media"),
+    transcriptsDir: join(homeDir, "transcripts"),
     listenSqlDb,
     listenKvPrefix,
   };

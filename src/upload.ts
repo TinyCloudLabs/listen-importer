@@ -2,6 +2,7 @@ import { basename } from "node:path";
 import type { AppConfig } from "./config";
 import { remoteKey } from "./config";
 import type { ImporterStore, RecordingRow } from "./db";
+import type { TranscriptSegment } from "./transcription";
 import { putKvFile, putKvString, sqlExecute, type TcOptions } from "./tc";
 
 const IMPORTER_TABLE_SQL = `CREATE TABLE IF NOT EXISTS listen_importer_recording (
@@ -15,7 +16,9 @@ const IMPORTER_TABLE_SQL = `CREATE TABLE IF NOT EXISTS listen_importer_recording
   local_source_path TEXT,
   media_kv_key TEXT NOT NULL,
   metadata_kv_key TEXT NOT NULL,
+  transcript_kv_key TEXT,
   uploaded_at TEXT NOT NULL,
+  transcribed_at TEXT,
   status TEXT NOT NULL
 )`;
 
@@ -61,27 +64,47 @@ export async function uploadPending(
   ensureRemoteImporterSchema(config, options);
   if (options.publish) ensureConversationSchema(config, options);
 
-  const rows = store.pendingUpload(limit);
+  const rows = store.pendingUpload(limit, Boolean(options.publish));
   const result: UploadResult = { uploaded: 0, published: 0, failed: 0 };
 
   for (const row of rows) {
     try {
       const mediaKey = mediaKeyFor(config, row);
       const metadataKey = metadataKeyFor(config, row);
-      const metadata = metadataFor(row, mediaKey, metadataKey);
+      const transcriptImportKey = row.transcript_path
+        ? transcriptImportKeyFor(config, row)
+        : null;
+      const metadata = metadataFor(
+        row,
+        mediaKey,
+        metadataKey,
+        transcriptImportKey,
+      );
 
       putKvFile(mediaKey, row.local_path, options);
+      if (row.transcript_path && transcriptImportKey) {
+        putKvFile(transcriptImportKey, row.transcript_path, options);
+        store.markTranscriptUploaded(row.id, transcriptImportKey);
+      }
       putKvString(metadataKey, JSON.stringify(metadata), options);
-      insertRemoteImporterRow(config, row, mediaKey, metadataKey, options);
+      insertRemoteImporterRow(
+        config,
+        row,
+        mediaKey,
+        metadataKey,
+        transcriptImportKey,
+        options,
+      );
       store.markUploaded(row.id, mediaKey, metadataKey);
       result.uploaded += 1;
 
       if (options.publish) {
-        const conversationId = publishConversation(
+        const conversationId = await publishConversation(
           config,
           row,
           mediaKey,
           metadataKey,
+          transcriptImportKey,
           options,
         );
         store.markPublished(row.id, conversationId);
@@ -116,14 +139,16 @@ function insertRemoteImporterRow(
   row: RecordingRow,
   mediaKey: string,
   metadataKey: string,
+  transcriptImportKey: string | null,
   options: TcOptions,
 ): void {
   sqlExecute(
     config.listenSqlDb,
     `INSERT OR REPLACE INTO listen_importer_recording (
       id, file_name, recorder, sha256, size_bytes, content_type, recorded_at,
-      local_source_path, media_kv_key, metadata_kv_key, uploaded_at, status
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      local_source_path, media_kv_key, metadata_kv_key, transcript_kv_key,
+      uploaded_at, transcribed_at, status
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       row.id,
       row.file_name,
@@ -135,23 +160,30 @@ function insertRemoteImporterRow(
       row.source_path,
       mediaKey,
       metadataKey,
+      transcriptImportKey,
       new Date().toISOString(),
+      row.transcribed_at,
       "uploaded",
     ],
     options,
   );
 }
 
-function publishConversation(
+async function publishConversation(
   config: AppConfig,
   row: RecordingRow,
   mediaKey: string,
   metadataKey: string,
+  transcriptImportKey: string | null,
   options: TcOptions,
-): string {
+): Promise<string> {
   const conversationId = `rec-${row.sha256.slice(0, 24)}`;
   const now = new Date().toISOString();
   const startedAt = row.recorded_at ?? row.modified_at ?? now;
+  const endedAt = row.duration_secs
+    ? addSeconds(startedAt, row.duration_secs)
+    : null;
+  const transcript = await loadTranscript(row);
   const metadata = {
     import_type: "recorder-audio",
     importer: "listen-importer",
@@ -160,13 +192,20 @@ function publishConversation(
     original_source_path: row.source_path,
     audio_kv_key: mediaKey,
     audio_metadata_kv_key: metadataKey,
+    transcript_kv_key: transcriptImportKey,
+    transcription_provider: row.transcription_provider,
+    transcribed_at: row.transcribed_at,
     audio_content_type: row.content_type,
     audio_size_bytes: row.size_bytes,
     sha256: row.sha256,
     recorder: row.recorder,
   };
 
-  putKvString(remoteKey(config, `transcript/${conversationId}`), "[]", options);
+  putKvString(
+    remoteKey(config, `transcript/${conversationId}`),
+    JSON.stringify(transcript),
+    options,
+  );
   sqlExecute(
     config.listenSqlDb,
     `INSERT OR REPLACE INTO conversation (
@@ -180,8 +219,8 @@ function publishConversation(
       `listen-importer:${row.sha256}`,
       null,
       startedAt,
-      null,
-      null,
+      endedAt,
+      row.duration_secs,
       null,
       JSON.stringify(metadata),
       now,
@@ -189,6 +228,7 @@ function publishConversation(
     ],
     options,
   );
+  insertParticipants(config, conversationId, transcript, options);
   return conversationId;
 }
 
@@ -196,7 +236,8 @@ function metadataFor(
   row: RecordingRow,
   mediaKey: string,
   metadataKey: string,
-): Record<string, unknown> {
+  transcriptKey: string | null,
+) {
   return {
     id: row.id,
     fileName: row.file_name,
@@ -210,6 +251,10 @@ function metadataFor(
     localPath: row.local_path,
     mediaKvKey: mediaKey,
     metadataKvKey: metadataKey,
+    transcriptKvKey: transcriptKey,
+    transcriptionProvider: row.transcription_provider,
+    transcribedAt: row.transcribed_at,
+    durationSecs: row.duration_secs,
     uploadedAt: new Date().toISOString(),
   };
 }
@@ -225,7 +270,57 @@ function metadataKeyFor(config: AppConfig, row: RecordingRow): string {
   return remoteKey(config, `importer/metadata/${row.sha256}.json`);
 }
 
+function transcriptImportKeyFor(config: AppConfig, row: RecordingRow): string {
+  return remoteKey(config, `importer/transcripts/${row.sha256}.json`);
+}
+
 function titleFor(row: RecordingRow): string {
   const stem = basename(row.file_name, row.extension).replace(/[_-]+/g, " ");
   return stem.trim() || row.file_name;
+}
+
+async function loadTranscript(row: RecordingRow): Promise<TranscriptSegment[]> {
+  if (!row.transcript_path) return [];
+  const raw = await Bun.file(row.transcript_path).text();
+  const parsed = JSON.parse(raw) as TranscriptSegment[];
+  return Array.isArray(parsed) ? parsed : [];
+}
+
+function insertParticipants(
+  config: AppConfig,
+  conversationId: string,
+  transcript: TranscriptSegment[],
+  options: TcOptions,
+): void {
+  const speakers = Array.from(
+    new Set(transcript.map((segment) => segment.speaker_name).filter(Boolean)),
+  );
+  sqlExecute(
+    config.listenSqlDb,
+    `DELETE FROM participant WHERE conversation_id = ?`,
+    [conversationId],
+    options,
+  );
+  for (let index = 0; index < speakers.length; index += 1) {
+    const speaker = speakers[index]!;
+    sqlExecute(
+      config.listenSqlDb,
+      `INSERT OR REPLACE INTO participant (id, conversation_id, name, email, speaker_label)
+       VALUES (?, ?, ?, ?, ?)`,
+      [
+        `${conversationId}-speaker-${index + 1}`,
+        conversationId,
+        speaker,
+        null,
+        String(index + 1),
+      ],
+      options,
+    );
+  }
+}
+
+function addSeconds(iso: string, seconds: number): string | null {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return null;
+  return new Date(date.getTime() + seconds * 1000).toISOString();
 }

@@ -20,6 +20,7 @@ describe("ImporterStore", () => {
       homeDir: tempDir,
       dbPath: join(tempDir, "state.sqlite"),
       mediaDir: join(tempDir, "media"),
+      transcriptsDir: join(tempDir, "transcripts"),
       listenSqlDb: "test-db",
       listenKvPrefix: "test-prefix",
     };
@@ -48,7 +49,16 @@ describe("ImporterStore", () => {
       uploaded: 0,
       published: 0,
       failed: 0,
+      transcript_ready: 0,
+      transcript_missing: 1,
     });
+    store.markTranscribed("sha", {
+      provider: "deepgram",
+      transcriptPath: join(tempDir, "transcripts", "sha.json"),
+      transcriptText: "hello",
+      durationSecs: 1.2,
+    });
+    expect(store.counts().transcript_ready).toBe(1);
     expect(store.list(1)[0]!.file_name).toBe("B.WAV");
     store.close();
   });

@@ -4,6 +4,7 @@ import { getConfig } from "./config";
 import { openStore } from "./db";
 import { cloneRecording, detectRecorder, scanRecorder } from "./media";
 import { authStatus, createDelegation, type TcOptions } from "./tc";
+import { transcribePending, type TranscriptionProvider } from "./transcription";
 import { uploadPending } from "./upload";
 
 interface ParsedArgs {
@@ -20,6 +21,7 @@ async function main(): Promise<void> {
     case "init": {
       await mkdir(config.homeDir, { recursive: true });
       await mkdir(config.mediaDir, { recursive: true });
+      await mkdir(config.transcriptsDir, { recursive: true });
       const store = await openStore(config);
       store.close();
       console.log(`Initialized ${config.homeDir}`);
@@ -92,6 +94,9 @@ async function main(): Promise<void> {
         console.log(`Uploaded: ${counts.uploaded}`);
         console.log(`Published: ${counts.published}`);
         console.log(`Failed: ${counts.failed}`);
+        console.log(
+          `Transcripts: ${counts.transcript_ready} ready, ${counts.transcript_missing} missing`,
+        );
       }
       break;
     }
@@ -106,6 +111,22 @@ async function main(): Promise<void> {
           `${row.status.padEnd(9)} ${row.file_name} ${row.sha256.slice(0, 12)}`,
         );
       }
+      break;
+    }
+
+    case "transcribe": {
+      const limit = numberFlag(args, "limit") ?? 10;
+      const store = await openStore(config);
+      const result = await transcribePending(config, store, {
+        provider: providerFlag(args),
+        apiKey: stringFlag(args, "api-key"),
+        limit,
+        force: Boolean(args.flags.force),
+        model: stringFlag(args, "model"),
+        language: stringFlag(args, "language"),
+      });
+      store.close();
+      console.log(`Transcribed ${result.transcribed}; failed ${result.failed}`);
       break;
     }
 
@@ -128,6 +149,7 @@ async function main(): Promise<void> {
       console.log(`State: ${config.homeDir}`);
       console.log(`Database: ${config.dbPath}`);
       console.log(`Media: ${config.mediaDir}`);
+      console.log(`Transcripts: ${config.transcriptsDir}`);
       console.log(`Listen SQL DB: ${config.listenSqlDb}`);
       console.log(`Listen KV prefix: ${config.listenKvPrefix}`);
       try {
@@ -196,6 +218,13 @@ function numberFlag(args: ParsedArgs, name: string): number | undefined {
   return Math.floor(parsed);
 }
 
+function providerFlag(args: ParsedArgs): TranscriptionProvider | undefined {
+  const provider = stringFlag(args, "provider");
+  if (!provider) return undefined;
+  if (provider === "deepgram" || provider === "assemblyai") return provider;
+  throw new Error("--provider must be deepgram or assemblyai");
+}
+
 function printHelp(): void {
   console.log(`listen-importer
 
@@ -206,6 +235,7 @@ Usage:
   listen-importer scan <path> [--recorder mic-mini|generic] [--dry-run]
   listen-importer status [--json]
   listen-importer list [--limit n]
+  listen-importer transcribe [--limit n] [--provider deepgram|assemblyai] [--api-key key] [--force]
   listen-importer upload [--limit n] [--publish] [--profile name] [--host url]
   listen-importer doctor
 `);

@@ -17,6 +17,7 @@ Local state defaults to:
 ~/.listen-importer/
   listen-importer.sqlite
   media/
+  transcripts/
 ```
 
 Override it with `LISTEN_IMPORTER_HOME=/path/to/state`.
@@ -33,17 +34,19 @@ Remote defaults:
 listen-importer init
 listen-importer auth
 listen-importer scan /Volumes/MIC\ MINI
+listen-importer transcribe
 listen-importer status
-listen-importer upload
-```
-
-To insert placeholder Listen conversation rows for uploaded recordings:
-
-```sh
 listen-importer upload --publish
 ```
 
-That makes recordings visible in Listen as `source = recorder` with audio metadata. The CLI does not transcribe audio by itself yet.
+Transcription uses Deepgram or AssemblyAI:
+
+```sh
+DEEPGRAM_API_KEY=... listen-importer transcribe --provider deepgram
+ASSEMBLYAI_API_KEY=... listen-importer transcribe --provider assemblyai
+```
+
+`upload --publish` makes recordings visible in Listen as `source = recorder`. When a transcript exists locally, it writes that transcript to the Listen transcript KV path for the conversation.
 
 ## Commands
 
@@ -53,6 +56,7 @@ listen-importer auth [--profile name] [--host url]
 listen-importer permissions [--to did] [--expiry 30d]
 listen-importer scan <path> [--recorder mic-mini|generic] [--dry-run]
 listen-importer status [--json]
+listen-importer transcribe [--limit n] [--provider deepgram|assemblyai] [--api-key key] [--force]
 listen-importer upload [--limit n] [--publish] [--profile name] [--host url]
 listen-importer list [--limit n]
 listen-importer doctor
