@@ -271,18 +271,24 @@ export class ImporterStore {
       .all(limit) as RecordingRow[];
   }
 
-  pendingUpload(limit = 25, includeUploaded = false): RecordingRow[] {
+  pendingUpload(
+    limit = 25,
+    includeUploaded = false,
+    listenSource?: string,
+  ): RecordingRow[] {
     const statuses = includeUploaded
       ? "'cloned', 'failed', 'uploaded'"
       : "'cloned', 'failed'";
+    const sourceClause = listenSource ? "AND listen_source = ?" : "";
+    const params = listenSource ? [listenSource, limit] : [limit];
     return this.db
       .query(
         `SELECT * FROM recordings
-         WHERE status IN (${statuses})
+         WHERE status IN (${statuses}) ${sourceClause}
          ORDER BY created_at ASC
          LIMIT ?`,
       )
-      .all(limit) as RecordingRow[];
+      .all(...params) as RecordingRow[];
   }
 
   pendingTranscription(limit = 25, force = false): RecordingRow[] {

@@ -79,7 +79,7 @@ listen-importer scan-source voice-memos|voxterm [--since yesterday|YYYY-MM-DD] [
 listen-importer status [--json]
 listen-importer downsample [--limit n] [--format mp3|m4a|wav] [--bitrate 64k] [--sample-rate 16000] [--force]
 listen-importer transcribe [--limit n] [--provider deepgram|assemblyai] [--api-key key] [--force]
-listen-importer upload [--limit n] [--publish] [--use-downsampled] [--transcripts-only] [--profile name] [--host url]
+listen-importer upload [--limit n] [--publish] [--use-downsampled] [--transcripts-only] [--source voice_memos|voxterm|recorder] [--profile name] [--host url]
 listen-importer list [--limit n]
 listen-importer doctor
 ```

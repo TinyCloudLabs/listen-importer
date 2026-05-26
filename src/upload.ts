@@ -55,6 +55,7 @@ export interface UploadOptions extends TcOptions {
   publish?: boolean;
   useDownsampled?: boolean;
   transcriptsOnly?: boolean;
+  listenSource?: string;
 }
 
 export interface UploadResult {
@@ -75,7 +76,11 @@ export async function uploadPending(
   if (!options.transcriptsOnly) ensureRemoteImporterSchema(config, options);
   if (options.publish) ensureConversationSchema(config, options);
 
-  const rows = store.pendingUpload(limit, Boolean(options.publish));
+  const rows = store.pendingUpload(
+    limit,
+    Boolean(options.publish),
+    options.listenSource,
+  );
   const result: UploadResult = { uploaded: 0, published: 0, failed: 0 };
 
   for (const row of rows) {
