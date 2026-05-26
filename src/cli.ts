@@ -8,6 +8,12 @@ import {
 } from "./downsample";
 import { openStore } from "./db";
 import { cloneRecording, detectRecorder, scanRecorder } from "./media";
+import {
+  formatSince,
+  parseImportSource,
+  parseSince,
+  scanImportSource,
+} from "./sources";
 import { authStatus, createDelegation, type TcOptions } from "./tc";
 import { transcribePending, type TranscriptionProvider } from "./transcription";
 import { uploadPending } from "./upload";
@@ -94,6 +100,34 @@ async function main(): Promise<void> {
       break;
     }
 
+    case "scan-source": {
+      const source = parseImportSource(args.positionals[0]);
+      const since = parseSince(stringFlag(args, "since"));
+      const dryRun = Boolean(args.flags["dry-run"]);
+      const files = await scanImportSource(source, {
+        since,
+        path: stringFlag(args, "path") ?? stringFlag(args, "library"),
+      });
+      if (dryRun) {
+        console.log(
+          JSON.stringify(
+            { source, since: formatSince(since), found: files.length, files },
+            null,
+            2,
+          ),
+        );
+        break;
+      }
+
+      const store = await openStore(config);
+      const result = await cacheFiles(config, store, files);
+      store.close();
+      console.log(
+        `Scanned ${files.length} ${source} item(s) since ${formatSince(since)}: ${result.created} new, ${result.updated} updated, ${result.skipped} unchanged`,
+      );
+      break;
+    }
+
     case "status": {
       const store = await openStore(config);
       const counts = store.counts();
@@ -122,7 +156,7 @@ async function main(): Promise<void> {
       store.close();
       for (const row of rows) {
         console.log(
-          `${row.status.padEnd(9)} ${row.file_name} ${row.sha256.slice(0, 12)}`,
+          `${row.status.padEnd(9)} ${row.listen_source.padEnd(12)} ${row.file_name} ${row.sha256.slice(0, 12)}`,
         );
       }
       break;
@@ -236,6 +270,27 @@ function tcOptions(args: ParsedArgs): TcOptions {
   };
 }
 
+async function cacheFiles(
+  config: ReturnType<typeof getConfig>,
+  store: Awaited<ReturnType<typeof openStore>>,
+  files: Awaited<ReturnType<typeof scanRecorder>>,
+): Promise<{ created: number; updated: number; skipped: number }> {
+  let created = 0;
+  let updated = 0;
+  let skipped = 0;
+  for (const file of files) {
+    if (store.hasSourceSnapshot(file)) {
+      skipped += 1;
+      continue;
+    }
+    const cloned = await cloneRecording(config, file);
+    const result = store.upsertRecording(cloned);
+    if (result === "created") created += 1;
+    else updated += 1;
+  }
+  return { created, updated, skipped };
+}
+
 function stringFlag(args: ParsedArgs, name: string): string | undefined {
   const value = args.flags[name];
   return typeof value === "string" && value.length > 0 ? value : undefined;
@@ -269,6 +324,7 @@ Usage:
   listen-importer auth [--profile name] [--host url]
   listen-importer permissions [--to did] [--expiry 30d]
   listen-importer scan <path> [--recorder mic-mini|generic] [--dry-run]
+  listen-importer scan-source voice-memos|voxterm [--since yesterday|YYYY-MM-DD] [--path path] [--dry-run]
   listen-importer status [--json]
   listen-importer list [--limit n]
   listen-importer downsample [--limit n] [--format mp3|m4a|wav] [--bitrate 64k] [--sample-rate 16000] [--force]

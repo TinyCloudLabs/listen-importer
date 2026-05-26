@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, readdir, stat, copyFile } from "node:fs/promises";
+import { mkdir, readdir, stat, copyFile, writeFile } from "node:fs/promises";
 import { basename, extname, join } from "node:path";
 import type { AppConfig } from "./config";
 
@@ -26,6 +26,17 @@ export interface RecorderFile {
   fileName: string;
   extension: string;
   contentType: string;
+  sourceAdapter?: string;
+  importType?: string;
+  listenSource?: string;
+  sourceId?: string | null;
+  sourceUri?: string | null;
+  title?: string | null;
+  artifactKind?: "audio" | "transcript";
+  metadataJson?: string | null;
+  transcriptSegments?: TranscriptSegment[];
+  transcriptText?: string | null;
+  durationSecs?: number | null;
   recorder: string;
   sizeBytes: number;
   recordedAt: string | null;
@@ -36,6 +47,15 @@ export interface ClonedRecording extends RecorderFile {
   id: string;
   sha256: string;
   localPath: string;
+  transcriptPath?: string | null;
+}
+
+export interface TranscriptSegment {
+  speaker_name: string;
+  text: string;
+  start_time: number | null;
+  end_time: number | null;
+  language?: string | null;
 }
 
 export async function scanRecorder(
@@ -63,6 +83,16 @@ export async function scanRecorder(
         fileName: entry.name,
         extension,
         contentType: contentTypeForExtension(extension),
+        sourceAdapter: "recorder-disk",
+        importType: "recorder-audio",
+        listenSource: "recorder",
+        sourceId: null,
+        sourceUri: sourcePath,
+        title: null,
+        artifactKind: "audio",
+        metadataJson: null,
+        transcriptText: null,
+        durationSecs: null,
         recorder,
         sizeBytes: stats.size,
         recordedAt:
@@ -90,12 +120,20 @@ export async function cloneRecording(
   await mkdir(localDir, { recursive: true });
   await copyFile(file.sourcePath, localPath);
 
-  return {
+  const cloned: ClonedRecording = {
     ...file,
     id: sha256,
     sha256,
     localPath,
   };
+  if (file.transcriptSegments) {
+    cloned.transcriptPath = await writeTranscriptSegments(
+      config,
+      sha256,
+      file.transcriptSegments,
+    );
+  }
+  return cloned;
 }
 
 export function detectRecorder(pathValue: string): string {
@@ -173,6 +211,19 @@ async function hashFile(pathValue: string): Promise<string> {
   }
 
   return hash.digest("hex");
+}
+
+async function writeTranscriptSegments(
+  config: AppConfig,
+  sha256: string,
+  segments: TranscriptSegment[],
+): Promise<string> {
+  const shard = sha256.slice(0, 2);
+  const dir = join(config.transcriptsDir, shard);
+  const path = join(dir, `${sha256}.json`);
+  await mkdir(dir, { recursive: true });
+  await writeFile(path, `${JSON.stringify(segments, null, 2)}\n`);
+  return path;
 }
 
 function toIso(

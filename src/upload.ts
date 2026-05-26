@@ -18,6 +18,11 @@ const IMPORTER_TABLE_SQL = `CREATE TABLE IF NOT EXISTS listen_importer_recording
   media_kv_key TEXT NOT NULL,
   metadata_kv_key TEXT NOT NULL,
   transcript_kv_key TEXT,
+  source_adapter TEXT,
+  import_type TEXT,
+  listen_source TEXT,
+  source_id TEXT,
+  artifact_kind TEXT,
   uploaded_at TEXT NOT NULL,
   transcribed_at TEXT,
   status TEXT NOT NULL
@@ -75,7 +80,10 @@ export async function uploadPending(
 
   for (const row of rows) {
     try {
-      const audio = audioSourceFor(row, Boolean(options.useDownsampled));
+      const audio =
+        row.artifact_kind === "audio"
+          ? audioSourceFor(row, Boolean(options.useDownsampled))
+          : null;
       if (options.transcriptsOnly) {
         const conversationId = await publishConversation(
           config,
@@ -91,7 +99,7 @@ export async function uploadPending(
         continue;
       }
 
-      const mediaKey = mediaKeyFor(config, row, audio);
+      const mediaKey = audio ? mediaKeyFor(config, row, audio) : null;
       const metadataKey = metadataKeyFor(config, row);
       const transcriptImportKey = row.transcript_path
         ? transcriptImportKeyFor(config, row)
@@ -104,7 +112,7 @@ export async function uploadPending(
         transcriptImportKey,
       );
 
-      putKvFile(mediaKey, audio.path, options);
+      if (audio && mediaKey) putKvFile(mediaKey, audio.path, options);
       if (row.transcript_path && transcriptImportKey) {
         putKvFile(transcriptImportKey, row.transcript_path, options);
         store.markTranscriptUploaded(row.id, transcriptImportKey);
@@ -162,9 +170,9 @@ function ensureConversationSchema(config: AppConfig, options: TcOptions): void {
 function insertRemoteImporterRow(
   config: AppConfig,
   row: RecordingRow,
-  audio: AudioSource,
+  audio: AudioSource | null,
   mediaKey: string | null,
-  metadataKey: string | null,
+  metadataKey: string,
   transcriptImportKey: string | null,
   options: TcOptions,
 ): void {
@@ -180,11 +188,11 @@ function insertRemoteImporterRow(
       row.file_name,
       row.recorder,
       row.sha256,
-      audio.sizeBytes,
-      audio.contentType,
+      audio?.sizeBytes ?? row.size_bytes,
+      audio?.contentType ?? row.content_type,
       row.recorded_at,
       row.source_path,
-      mediaKey,
+      mediaKey ?? "",
       metadataKey,
       transcriptImportKey,
       new Date().toISOString(),
@@ -198,13 +206,13 @@ function insertRemoteImporterRow(
 async function publishConversation(
   config: AppConfig,
   row: RecordingRow,
-  audio: AudioSource,
+  audio: AudioSource | null,
   mediaKey: string | null,
   metadataKey: string | null,
   transcriptImportKey: string | null,
   options: TcOptions,
 ): Promise<string> {
-  const conversationId = `rec-${row.sha256.slice(0, 24)}`;
+  const conversationId = conversationIdFor(row);
   const now = new Date().toISOString();
   const startedAt = row.recorded_at ?? row.modified_at ?? now;
   const endedAt = row.duration_secs
@@ -212,25 +220,31 @@ async function publishConversation(
     : null;
   const transcript = await loadTranscript(row);
   const metadata = {
-    import_type: "recorder-audio",
+    import_type: row.import_type,
+    source_adapter: row.source_adapter,
+    listen_source: row.listen_source,
     importer: "listen-importer",
     importer_recording_id: row.id,
+    source_id: row.source_id,
+    source_uri: row.source_uri,
+    artifact_kind: row.artifact_kind,
     original_file_name: row.file_name,
     original_source_path: row.source_path,
     audio_kv_key: mediaKey,
     audio_metadata_kv_key: metadataKey,
-    audio_source_kind: audio.kind,
+    audio_source_kind: audio?.kind ?? null,
     transcript_kv_key: transcriptImportKey,
     transcription_provider: row.transcription_provider,
     transcribed_at: row.transcribed_at,
-    audio_content_type: audio.contentType,
-    audio_size_bytes: audio.sizeBytes,
+    audio_content_type: audio?.contentType ?? null,
+    audio_size_bytes: audio?.sizeBytes ?? null,
     original_audio_content_type: row.content_type,
     original_audio_size_bytes: row.size_bytes,
     downsampled_audio_path: row.downsampled_path,
     downsampled_audio_size_bytes: row.downsampled_size_bytes,
     sha256: row.sha256,
     recorder: row.recorder,
+    source_metadata: parseMetadata(row.metadata_json),
   };
 
   const conversationTranscriptKey = remoteKey(
@@ -251,8 +265,8 @@ async function publishConversation(
     [
       conversationId,
       titleFor(row),
-      "recorder",
-      `listen-importer:${row.sha256}`,
+      row.listen_source,
+      sourceIdFor(row),
       null,
       startedAt,
       endedAt,
@@ -270,19 +284,26 @@ async function publishConversation(
 
 function metadataFor(
   row: RecordingRow,
-  audio: AudioSource,
-  mediaKey: string,
+  audio: AudioSource | null,
+  mediaKey: string | null,
   metadataKey: string,
   transcriptKey: string | null,
 ) {
   return {
     id: row.id,
+    sourceAdapter: row.source_adapter,
+    importType: row.import_type,
+    listenSource: row.listen_source,
+    sourceId: row.source_id,
+    sourceUri: row.source_uri,
+    title: row.title,
+    artifactKind: row.artifact_kind,
     fileName: row.file_name,
     recorder: row.recorder,
     sha256: row.sha256,
-    sizeBytes: audio.sizeBytes,
-    contentType: audio.contentType,
-    mediaSourceKind: audio.kind,
+    sizeBytes: audio?.sizeBytes ?? row.size_bytes,
+    contentType: audio?.contentType ?? row.content_type,
+    mediaSourceKind: audio?.kind ?? null,
     originalSizeBytes: row.size_bytes,
     originalContentType: row.content_type,
     downsampledPath: row.downsampled_path,
@@ -297,6 +318,7 @@ function metadataFor(
     transcriptionProvider: row.transcription_provider,
     transcribedAt: row.transcribed_at,
     durationSecs: row.duration_secs,
+    sourceMetadata: parseMetadata(row.metadata_json),
     uploadedAt: new Date().toISOString(),
   };
 }
@@ -321,8 +343,32 @@ function transcriptImportKeyFor(config: AppConfig, row: RecordingRow): string {
 }
 
 function titleFor(row: RecordingRow): string {
+  if (row.title?.trim()) return row.title.trim();
   const stem = basename(row.file_name, row.extension).replace(/[_-]+/g, " ");
   return stem.trim() || row.file_name;
+}
+
+function sourceIdFor(row: RecordingRow): string {
+  return `${row.source_adapter}:${row.source_id ?? row.sha256}`;
+}
+
+function conversationIdFor(row: RecordingRow): string {
+  const prefix =
+    row.listen_source === "voice_memos"
+      ? "vm"
+      : row.listen_source === "voxterm"
+        ? "vox"
+        : "rec";
+  return `${prefix}-${row.sha256.slice(0, 24)}`;
+}
+
+function parseMetadata(value: string | null): unknown {
+  if (!value) return null;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
 }
 
 async function loadTranscript(row: RecordingRow): Promise<TranscriptSegment[]> {
