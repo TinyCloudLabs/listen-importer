@@ -62,11 +62,12 @@ Downsampling is non-destructive. Originals stay in `media/`; smaller derived fil
 listen-importer scan-source voice-memos
 listen-importer scan-source voice-memos --since yesterday
 listen-importer scan-source voice-memos --since 2026-05-25
+listen-importer scan-source voice-memos --include-deleted
 listen-importer scan-source voxterm
 listen-importer scan-source voxterm --path ~/Documents/voxterm-transcripts
 ```
 
-Voice Memos reads the macOS Voice Memos library directly and publishes as `source = voice_memos`. It may require Full Disk Access for the terminal running the importer. VoxTerm reads saved markdown transcripts and publishes one Listen conversation per transcript file as `source = voxterm`.
+Voice Memos reads the macOS Voice Memos library directly and publishes as `source = voice_memos`. Deleted Voice Memos are skipped by default; pass `--include-deleted` to import them. It may require Full Disk Access for the terminal running the importer. VoxTerm reads saved markdown transcripts and publishes one Listen conversation per transcript file as `source = voxterm`.
 
 ## Commands
 
@@ -75,7 +76,7 @@ listen-importer init
 listen-importer auth [--profile name] [--host url]
 listen-importer permissions [--to did] [--expiry 30d]
 listen-importer scan <path> [--recorder mic-mini|generic] [--dry-run]
-listen-importer scan-source voice-memos|voxterm [--since yesterday|YYYY-MM-DD] [--path path] [--dry-run]
+listen-importer scan-source voice-memos|voxterm [--since yesterday|YYYY-MM-DD] [--path path] [--include-deleted] [--dry-run]
 listen-importer status [--json]
 listen-importer downsample [--limit n] [--format mp3|m4a|wav] [--bitrate 64k] [--sample-rate 16000] [--force]
 listen-importer transcribe [--limit n] [--provider deepgram|assemblyai] [--api-key key] [--force]
