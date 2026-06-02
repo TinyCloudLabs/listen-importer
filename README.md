@@ -35,10 +35,12 @@ Remote defaults:
 listen-importer init
 listen-importer auth
 listen-importer scan /Volumes/MIC\ MINI
-listen-importer downsample
-listen-importer transcribe
-listen-importer status
-listen-importer upload --publish --use-downsampled
+listen-importer scan-source voice-memos --since yesterday
+listen-importer scan-source voxterm
+listen-importer preprocess --source voice_memos
+listen-importer transcribe --source voice_memos --provider assemblyai
+listen-importer status --source voice_memos
+listen-importer upload --publish --use-downsampled --source voice_memos
 ```
 
 Transcription uses Deepgram or AssemblyAI:
@@ -52,6 +54,23 @@ ASSEMBLYAI_API_KEY=... listen-importer transcribe --provider assemblyai
 
 Downsampling is non-destructive. Originals stay in `media/`; smaller derived files are written to `downsampled/`. Transcription automatically prefers downsampled audio when it exists. Uploads use originals by default, or downsampled audio with `--use-downsampled`. Use `upload --publish --transcripts-only` when you only need Listen conversation rows and transcript blobs.
 
+Use `--source recorder`, `--source voice_memos`, or `--source voxterm` on `status`, `list`, `preprocess`, `downsample`, `transcribe`, and `upload` to keep each import workflow scoped. `voice-memos` is accepted as an alias for `voice_memos`, and `--source all` is the default.
+
+## Local sources
+
+`scan-source` imports local app libraries. If `--since` is omitted, the cutoff defaults to local midnight seven calendar days ago. The cutoff is inclusive.
+
+```sh
+listen-importer scan-source voice-memos
+listen-importer scan-source voice-memos --since yesterday
+listen-importer scan-source voice-memos --since 2026-05-25
+listen-importer scan-source voice-memos --include-deleted
+listen-importer scan-source voxterm
+listen-importer scan-source voxterm --path ~/Documents/voxterm-transcripts
+```
+
+Voice Memos reads the macOS Voice Memos library directly and publishes as `source = voice_memos`. Deleted Voice Memos are skipped by default; pass `--include-deleted` to import them. It may require Full Disk Access for the terminal running the importer. VoxTerm reads saved markdown transcripts and publishes one Listen conversation per transcript file as `source = voxterm`.
+
 ## Commands
 
 ```text
@@ -59,11 +78,13 @@ listen-importer init
 listen-importer auth [--profile name] [--host url]
 listen-importer permissions [--to did] [--expiry 30d]
 listen-importer scan <path> [--recorder mic-mini|generic] [--dry-run]
-listen-importer status [--json]
-listen-importer downsample [--limit n] [--format mp3|m4a|wav] [--bitrate 64k] [--sample-rate 16000] [--force]
-listen-importer transcribe [--limit n] [--provider deepgram|assemblyai] [--api-key key] [--force]
-listen-importer upload [--limit n] [--publish] [--use-downsampled] [--transcripts-only] [--profile name] [--host url]
-listen-importer list [--limit n]
+listen-importer scan-source voice-memos|voxterm [--since yesterday|YYYY-MM-DD] [--path path] [--include-deleted] [--dry-run]
+listen-importer status [--source recorder|voice_memos|voxterm|all] [--json]
+listen-importer list [--limit n] [--source recorder|voice_memos|voxterm|all]
+listen-importer preprocess [--limit n] [--source recorder|voice_memos|voxterm|all] [--format mp3|m4a|wav] [--bitrate 64k] [--sample-rate 16000] [--force]
+listen-importer downsample [--limit n] [--source recorder|voice_memos|voxterm|all] [--format mp3|m4a|wav] [--bitrate 64k] [--sample-rate 16000] [--force]
+listen-importer transcribe [--limit n] [--source recorder|voice_memos|voxterm|all] [--provider deepgram|assemblyai] [--api-key key] [--force]
+listen-importer upload [--limit n] [--publish] [--use-downsampled] [--transcripts-only] [--source recorder|voice_memos|voxterm|all] [--profile name] [--host url]
 listen-importer doctor
 ```
 

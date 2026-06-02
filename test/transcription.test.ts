@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  isEmptyTranscriptError,
   normalizeAssemblyAIResponse,
   normalizeDeepgramResponse,
 } from "../src/transcription";
@@ -63,5 +64,11 @@ describe("transcription normalization", () => {
         end_time: 2.5,
       },
     ]);
+  });
+
+  test("treats AssemblyAI empty or too-short audio errors as empty transcripts", () => {
+    expect(isEmptyTranscriptError("Audio duration is too short.")).toBe(true);
+    expect(isEmptyTranscriptError("No spoken audio found")).toBe(true);
+    expect(isEmptyTranscriptError("quota exceeded")).toBe(false);
   });
 });

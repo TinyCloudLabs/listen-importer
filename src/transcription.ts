@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { AppConfig } from "./config";
 import type { ImporterStore, RecordingRow } from "./db";
 import { audioSourceFor } from "./downsample";
+import type { ListenSource } from "./listen-source";
 
 export type TranscriptionProvider = "deepgram" | "assemblyai";
 
@@ -31,6 +32,7 @@ export interface TranscribeOptions {
   language?: string;
   pollIntervalMs?: number;
   timeoutMs?: number;
+  listenSource?: ListenSource;
 }
 
 export interface TranscribeResult {
@@ -66,6 +68,7 @@ export async function transcribePending(
   const rows = store.pendingTranscription(
     options.limit ?? 25,
     Boolean(options.force),
+    options.listenSource,
   );
   const result: TranscribeResult = { transcribed: 0, failed: 0 };
   if (rows.length === 0) return result;
@@ -320,7 +323,7 @@ async function transcribeWithAssemblyAI(
     const body = (await poll.json()) as { status?: string; error?: string };
     if (body.status === "completed") return normalizeAssemblyAIResponse(body);
     if (body.status === "error") {
-      if (isNoSpeechError(body.error))
+      if (isEmptyTranscriptError(body.error))
         return emptyAssemblyTranscript(submitted.id);
       throw new Error(body.error ?? "AssemblyAI transcription failed");
     }
@@ -404,12 +407,13 @@ function emptyAssemblyTranscript(providerJobId: string): NormalizedTranscript {
   };
 }
 
-function isNoSpeechError(error: string | undefined): boolean {
+export function isEmptyTranscriptError(error: string | undefined): boolean {
   if (typeof error !== "string") return false;
   const normalized = error.toLowerCase();
   return (
     normalized.includes("no spoken audio") ||
-    normalized.includes("does not appear to contain audio")
+    normalized.includes("does not appear to contain audio") ||
+    normalized.includes("audio duration is too short")
   );
 }
 

@@ -3,6 +3,7 @@ import { mkdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { AppConfig } from "./config";
 import type { ImporterStore, RecordingRow } from "./db";
+import type { ListenSource } from "./listen-source";
 
 export type DownsampleFormat = "mp3" | "m4a" | "wav";
 
@@ -12,6 +13,7 @@ export interface DownsampleOptions {
   format?: DownsampleFormat;
   bitrate?: string;
   sampleRate?: number;
+  listenSource?: ListenSource;
 }
 
 export interface DownsampleResult {
@@ -39,6 +41,7 @@ export async function downsamplePending(
   const rows = store.pendingDownsample(
     options.limit ?? 25,
     Boolean(options.force),
+    options.listenSource,
   );
   const result: DownsampleResult = { downsampled: 0, failed: 0 };
   if (rows.length === 0) return result;

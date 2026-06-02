@@ -7,7 +7,14 @@ import {
   type DownsampleFormat,
 } from "./downsample";
 import { openStore } from "./db";
+import { parseListenSource } from "./listen-source";
 import { cloneRecording, detectRecorder, scanRecorder } from "./media";
+import {
+  formatSince,
+  parseImportSource,
+  parseSince,
+  scanImportSource,
+} from "./sources";
 import { authStatus, createDelegation, type TcOptions } from "./tc";
 import { transcribePending, type TranscriptionProvider } from "./transcription";
 import { uploadPending } from "./upload";
@@ -94,9 +101,39 @@ async function main(): Promise<void> {
       break;
     }
 
-    case "status": {
+    case "scan-source": {
+      const source = parseImportSource(args.positionals[0]);
+      const since = parseSince(stringFlag(args, "since"));
+      const dryRun = Boolean(args.flags["dry-run"]);
+      const files = await scanImportSource(source, {
+        since,
+        path: stringFlag(args, "path") ?? stringFlag(args, "library"),
+        includeDeleted: Boolean(args.flags["include-deleted"]),
+      });
+      if (dryRun) {
+        console.log(
+          JSON.stringify(
+            { source, since: formatSince(since), found: files.length, files },
+            null,
+            2,
+          ),
+        );
+        break;
+      }
+
       const store = await openStore(config);
-      const counts = store.counts();
+      const result = await cacheFiles(config, store, files);
+      store.close();
+      console.log(
+        `Scanned ${files.length} ${source} item(s) since ${formatSince(since)}: ${result.created} new, ${result.updated} updated, ${result.skipped} unchanged`,
+      );
+      break;
+    }
+
+    case "status": {
+      const source = sourceFlag(args);
+      const store = await openStore(config);
+      const counts = store.counts(source);
       store.close();
       if (args.flags.json) console.log(JSON.stringify(counts, null, 2));
       else {
@@ -117,19 +154,22 @@ async function main(): Promise<void> {
 
     case "list": {
       const limit = numberFlag(args, "limit") ?? 50;
+      const source = sourceFlag(args);
       const store = await openStore(config);
-      const rows = store.list(limit);
+      const rows = store.list(limit, source);
       store.close();
       for (const row of rows) {
         console.log(
-          `${row.status.padEnd(9)} ${row.file_name} ${row.sha256.slice(0, 12)}`,
+          `${row.status.padEnd(9)} ${row.listen_source.padEnd(12)} ${row.file_name} ${row.sha256.slice(0, 12)}`,
         );
       }
       break;
     }
 
-    case "downsample": {
+    case "downsample":
+    case "preprocess": {
       const limit = numberFlag(args, "limit") ?? 25;
+      const source = sourceFlag(args);
       const store = await openStore(config);
       const result = await downsamplePending(config, store, {
         limit,
@@ -137,14 +177,18 @@ async function main(): Promise<void> {
         format: formatFlag(args),
         bitrate: stringFlag(args, "bitrate"),
         sampleRate: numberFlag(args, "sample-rate"),
+        listenSource: source,
       });
       store.close();
-      console.log(`Downsampled ${result.downsampled}; failed ${result.failed}`);
+      const verb =
+        args.command === "preprocess" ? "Preprocessed" : "Downsampled";
+      console.log(`${verb} ${result.downsampled}; failed ${result.failed}`);
       break;
     }
 
     case "transcribe": {
       const limit = numberFlag(args, "limit") ?? 10;
+      const source = sourceFlag(args);
       const store = await openStore(config);
       const result = await transcribePending(config, store, {
         provider: providerFlag(args),
@@ -153,6 +197,7 @@ async function main(): Promise<void> {
         force: Boolean(args.flags.force),
         model: stringFlag(args, "model"),
         language: stringFlag(args, "language"),
+        listenSource: source,
       });
       store.close();
       console.log(`Transcribed ${result.transcribed}; failed ${result.failed}`);
@@ -167,6 +212,7 @@ async function main(): Promise<void> {
         publish: Boolean(args.flags.publish),
         useDownsampled: Boolean(args.flags["use-downsampled"]),
         transcriptsOnly: Boolean(args.flags["transcripts-only"]),
+        listenSource: sourceFlag(args),
       });
       store.close();
       console.log(
@@ -236,6 +282,27 @@ function tcOptions(args: ParsedArgs): TcOptions {
   };
 }
 
+async function cacheFiles(
+  config: ReturnType<typeof getConfig>,
+  store: Awaited<ReturnType<typeof openStore>>,
+  files: Awaited<ReturnType<typeof scanRecorder>>,
+): Promise<{ created: number; updated: number; skipped: number }> {
+  let created = 0;
+  let updated = 0;
+  let skipped = 0;
+  for (const file of files) {
+    if (store.hasSourceSnapshot(file)) {
+      skipped += 1;
+      continue;
+    }
+    const cloned = await cloneRecording(config, file);
+    const result = store.upsertRecording(cloned);
+    if (result === "created") created += 1;
+    else updated += 1;
+  }
+  return { created, updated, skipped };
+}
+
 function stringFlag(args: ParsedArgs, name: string): string | undefined {
   const value = args.flags[name];
   return typeof value === "string" && value.length > 0 ? value : undefined;
@@ -261,6 +328,10 @@ function formatFlag(args: ParsedArgs): DownsampleFormat | undefined {
   return parseDownsampleFormat(stringFlag(args, "format"));
 }
 
+function sourceFlag(args: ParsedArgs): ReturnType<typeof parseListenSource> {
+  return parseListenSource(stringFlag(args, "source"));
+}
+
 function printHelp(): void {
   console.log(`listen-importer
 
@@ -269,11 +340,13 @@ Usage:
   listen-importer auth [--profile name] [--host url]
   listen-importer permissions [--to did] [--expiry 30d]
   listen-importer scan <path> [--recorder mic-mini|generic] [--dry-run]
-  listen-importer status [--json]
-  listen-importer list [--limit n]
-  listen-importer downsample [--limit n] [--format mp3|m4a|wav] [--bitrate 64k] [--sample-rate 16000] [--force]
-  listen-importer transcribe [--limit n] [--provider deepgram|assemblyai] [--api-key key] [--force]
-  listen-importer upload [--limit n] [--publish] [--use-downsampled] [--transcripts-only] [--profile name] [--host url]
+  listen-importer scan-source voice-memos|voxterm [--since yesterday|YYYY-MM-DD] [--path path] [--include-deleted] [--dry-run]
+  listen-importer status [--source recorder|voice_memos|voxterm|all] [--json]
+  listen-importer list [--limit n] [--source recorder|voice_memos|voxterm|all]
+  listen-importer preprocess [--limit n] [--source recorder|voice_memos|voxterm|all] [--format mp3|m4a|wav] [--bitrate 64k] [--sample-rate 16000] [--force]
+  listen-importer downsample [--limit n] [--source recorder|voice_memos|voxterm|all] [--format mp3|m4a|wav] [--bitrate 64k] [--sample-rate 16000] [--force]
+  listen-importer transcribe [--limit n] [--source recorder|voice_memos|voxterm|all] [--provider deepgram|assemblyai] [--api-key key] [--force]
+  listen-importer upload [--limit n] [--publish] [--use-downsampled] [--transcripts-only] [--source recorder|voice_memos|voxterm|all] [--profile name] [--host url]
   listen-importer doctor
 `);
 }
