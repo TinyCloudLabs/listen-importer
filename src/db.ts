@@ -11,6 +11,14 @@ export interface RecordingRow {
   file_name: string;
   extension: string;
   content_type: string;
+  source_adapter: string;
+  import_type: string;
+  listen_source: string;
+  source_id: string | null;
+  source_uri: string | null;
+  title: string | null;
+  artifact_kind: "audio" | "transcript";
+  metadata_json: string | null;
   downsampled_path: string | null;
   downsampled_content_type: string | null;
   downsampled_size_bytes: number | null;
@@ -96,6 +104,14 @@ export class ImporterStore {
         file_name TEXT NOT NULL,
         extension TEXT NOT NULL,
         content_type TEXT NOT NULL,
+        source_adapter TEXT NOT NULL DEFAULT 'recorder-disk',
+        import_type TEXT NOT NULL DEFAULT 'recorder-audio',
+        listen_source TEXT NOT NULL DEFAULT 'recorder',
+        source_id TEXT,
+        source_uri TEXT,
+        title TEXT,
+        artifact_kind TEXT NOT NULL DEFAULT 'audio',
+        metadata_json TEXT,
         downsampled_path TEXT,
         downsampled_content_type TEXT,
         downsampled_size_bytes INTEGER,
@@ -129,6 +145,17 @@ export class ImporterStore {
       CREATE INDEX IF NOT EXISTS recordings_status_idx ON recordings(status);
       CREATE INDEX IF NOT EXISTS recordings_recorder_idx ON recordings(recorder);
     `);
+    this.ensureColumn(
+      "source_adapter",
+      "TEXT NOT NULL DEFAULT 'recorder-disk'",
+    );
+    this.ensureColumn("import_type", "TEXT NOT NULL DEFAULT 'recorder-audio'");
+    this.ensureColumn("listen_source", "TEXT NOT NULL DEFAULT 'recorder'");
+    this.ensureColumn("source_id", "TEXT");
+    this.ensureColumn("source_uri", "TEXT");
+    this.ensureColumn("title", "TEXT");
+    this.ensureColumn("artifact_kind", "TEXT NOT NULL DEFAULT 'audio'");
+    this.ensureColumn("metadata_json", "TEXT");
     this.ensureColumn("transcript_kv_key", "TEXT");
     this.ensureColumn("downsampled_path", "TEXT");
     this.ensureColumn("downsampled_content_type", "TEXT");
@@ -144,17 +171,32 @@ export class ImporterStore {
     this.ensureColumn("transcribed_at", "TEXT");
     this.ensureColumn("transcription_error", "TEXT");
     this.ensureColumn("duration_secs", "REAL");
+    this.db.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS recordings_source_id_idx
+        ON recordings(source_adapter, source_id)
+        WHERE source_id IS NOT NULL;
+    `);
   }
 
   upsertRecording(recording: ClonedRecording): "created" | "updated" {
     const now = new Date().toISOString();
-    const existing = this.findBySha(recording.sha256);
+    const sourceAdapter = recording.sourceAdapter ?? "recorder-disk";
+    const importType = recording.importType ?? "recorder-audio";
+    const listenSource = recording.listenSource ?? "recorder";
+    const artifactKind = recording.artifactKind ?? "audio";
+    const existing = this.findExistingRecording(sourceAdapter, recording);
     if (existing) {
       this.db
         .query(
           `UPDATE recordings
-           SET source_path = ?, file_name = ?, extension = ?, content_type = ?, recorder = ?,
-               size_bytes = ?, recorded_at = ?, modified_at = ?, local_path = ?, updated_at = ?
+           SET source_path = ?, file_name = ?, extension = ?, content_type = ?,
+               source_adapter = ?, import_type = ?, listen_source = ?, source_id = ?,
+               source_uri = ?, title = ?, artifact_kind = ?, metadata_json = ?, recorder = ?,
+               sha256 = ?, size_bytes = ?, recorded_at = ?, modified_at = ?, local_path = ?,
+               transcript_path = COALESCE(?, transcript_path),
+               transcript_text = COALESCE(?, transcript_text),
+               duration_secs = COALESCE(?, duration_secs),
+               updated_at = ?
            WHERE id = ?`,
         )
         .run(
@@ -162,11 +204,23 @@ export class ImporterStore {
           recording.fileName,
           recording.extension,
           recording.contentType,
+          sourceAdapter,
+          importType,
+          listenSource,
+          recording.sourceId ?? null,
+          recording.sourceUri ?? recording.sourcePath,
+          recording.title ?? null,
+          artifactKind,
+          recording.metadataJson ?? null,
           recording.recorder,
+          recording.sha256,
           recording.sizeBytes,
           recording.recordedAt,
           recording.modifiedAt,
           recording.localPath,
+          recording.transcriptPath ?? null,
+          recording.transcriptText ?? null,
+          recording.durationSecs ?? null,
           now,
           existing.id,
         );
@@ -176,9 +230,11 @@ export class ImporterStore {
     this.db
       .query(
         `INSERT INTO recordings (
-          id, source_path, file_name, extension, content_type, recorder, sha256, size_bytes,
-          recorded_at, modified_at, local_path, status, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'cloned', ?, ?)`,
+          id, source_path, file_name, extension, content_type, source_adapter, import_type,
+          listen_source, source_id, source_uri, title, artifact_kind, metadata_json, recorder,
+          sha256, size_bytes, recorded_at, modified_at, local_path, status, transcript_path,
+          transcript_text, duration_secs, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'cloned', ?, ?, ?, ?, ?)`,
       )
       .run(
         recording.id,
@@ -186,12 +242,23 @@ export class ImporterStore {
         recording.fileName,
         recording.extension,
         recording.contentType,
+        sourceAdapter,
+        importType,
+        listenSource,
+        recording.sourceId ?? null,
+        recording.sourceUri ?? recording.sourcePath,
+        recording.title ?? null,
+        artifactKind,
+        recording.metadataJson ?? null,
         recording.recorder,
         recording.sha256,
         recording.sizeBytes,
         recording.recordedAt,
         recording.modifiedAt,
         recording.localPath,
+        recording.transcriptPath ?? null,
+        recording.transcriptText ?? null,
+        recording.durationSecs ?? null,
         now,
         now,
       );
@@ -204,25 +271,31 @@ export class ImporterStore {
       .all(limit) as RecordingRow[];
   }
 
-  pendingUpload(limit = 25, includeUploaded = false): RecordingRow[] {
+  pendingUpload(
+    limit = 25,
+    includeUploaded = false,
+    listenSource?: string,
+  ): RecordingRow[] {
     const statuses = includeUploaded
       ? "'cloned', 'failed', 'uploaded'"
       : "'cloned', 'failed'";
+    const sourceClause = listenSource ? "AND listen_source = ?" : "";
+    const params = listenSource ? [listenSource, limit] : [limit];
     return this.db
       .query(
         `SELECT * FROM recordings
-         WHERE status IN (${statuses})
+         WHERE status IN (${statuses}) ${sourceClause}
          ORDER BY created_at ASC
          LIMIT ?`,
       )
-      .all(limit) as RecordingRow[];
+      .all(...params) as RecordingRow[];
   }
 
   pendingTranscription(limit = 25, force = false): RecordingRow[] {
     return this.db
       .query(
         `SELECT * FROM recordings
-         WHERE ${force ? "1 = 1" : "transcript_path IS NULL"}
+         WHERE artifact_kind = 'audio' AND ${force ? "1 = 1" : "transcript_path IS NULL"}
          ORDER BY created_at ASC
          LIMIT ?`,
       )
@@ -233,7 +306,7 @@ export class ImporterStore {
     return this.db
       .query(
         `SELECT * FROM recordings
-         WHERE ${force ? "1 = 1" : "downsampled_path IS NULL"}
+         WHERE artifact_kind = 'audio' AND ${force ? "1 = 1" : "downsampled_path IS NULL"}
          ORDER BY created_at ASC
          LIMIT ?`,
       )
@@ -241,6 +314,22 @@ export class ImporterStore {
   }
 
   hasSourceSnapshot(recording: RecorderFile): boolean {
+    if (recording.sourceId) {
+      const row = this.db
+        .query(
+          `SELECT 1 FROM recordings
+           WHERE source_adapter = ? AND source_id = ? AND size_bytes = ? AND modified_at = ?
+           LIMIT 1`,
+        )
+        .get(
+          recording.sourceAdapter ?? "recorder-disk",
+          recording.sourceId,
+          recording.sizeBytes,
+          recording.modifiedAt,
+        );
+      return row !== null;
+    }
+
     const row = this.db
       .query(
         `SELECT 1 FROM recordings
@@ -296,7 +385,11 @@ export class ImporterStore {
     return counts;
   }
 
-  markUploaded(id: string, mediaKvKey: string, metadataKvKey: string): void {
+  markUploaded(
+    id: string,
+    mediaKvKey: string | null,
+    metadataKvKey: string,
+  ): void {
     const now = new Date().toISOString();
     this.db
       .query(
@@ -394,10 +487,22 @@ export class ImporterStore {
       .run(error, new Date().toISOString(), id);
   }
 
-  private findBySha(sha256: string): RecordingRow | null {
+  private findExistingRecording(
+    sourceAdapter: string,
+    recording: ClonedRecording,
+  ): RecordingRow | null {
+    if (recording.sourceId) {
+      const sourceMatch = this.db
+        .query(
+          `SELECT * FROM recordings WHERE source_adapter = ? AND source_id = ?`,
+        )
+        .get(sourceAdapter, recording.sourceId) as RecordingRow | null;
+      if (sourceMatch) return sourceMatch;
+    }
+
     return this.db
       .query(`SELECT * FROM recordings WHERE sha256 = ?`)
-      .get(sha256) as RecordingRow | null;
+      .get(recording.sha256) as RecordingRow | null;
   }
 
   private ensureColumn(name: string, definition: string): void {

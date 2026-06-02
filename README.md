@@ -35,6 +35,8 @@ Remote defaults:
 listen-importer init
 listen-importer auth
 listen-importer scan /Volumes/MIC\ MINI
+listen-importer scan-source voice-memos --since yesterday
+listen-importer scan-source voxterm
 listen-importer downsample
 listen-importer transcribe
 listen-importer status
@@ -52,6 +54,20 @@ ASSEMBLYAI_API_KEY=... listen-importer transcribe --provider assemblyai
 
 Downsampling is non-destructive. Originals stay in `media/`; smaller derived files are written to `downsampled/`. Transcription automatically prefers downsampled audio when it exists. Uploads use originals by default, or downsampled audio with `--use-downsampled`. Use `upload --publish --transcripts-only` when you only need Listen conversation rows and transcript blobs.
 
+## Local sources
+
+`scan-source` imports local app libraries. If `--since` is omitted, the cutoff defaults to local midnight seven calendar days ago. The cutoff is inclusive.
+
+```sh
+listen-importer scan-source voice-memos
+listen-importer scan-source voice-memos --since yesterday
+listen-importer scan-source voice-memos --since 2026-05-25
+listen-importer scan-source voxterm
+listen-importer scan-source voxterm --path ~/Documents/voxterm-transcripts
+```
+
+Voice Memos reads the macOS Voice Memos library directly and publishes as `source = voice_memos`. It may require Full Disk Access for the terminal running the importer. VoxTerm reads saved markdown transcripts and publishes one Listen conversation per transcript file as `source = voxterm`.
+
 ## Commands
 
 ```text
@@ -59,10 +75,11 @@ listen-importer init
 listen-importer auth [--profile name] [--host url]
 listen-importer permissions [--to did] [--expiry 30d]
 listen-importer scan <path> [--recorder mic-mini|generic] [--dry-run]
+listen-importer scan-source voice-memos|voxterm [--since yesterday|YYYY-MM-DD] [--path path] [--dry-run]
 listen-importer status [--json]
 listen-importer downsample [--limit n] [--format mp3|m4a|wav] [--bitrate 64k] [--sample-rate 16000] [--force]
 listen-importer transcribe [--limit n] [--provider deepgram|assemblyai] [--api-key key] [--force]
-listen-importer upload [--limit n] [--publish] [--use-downsampled] [--transcripts-only] [--profile name] [--host url]
+listen-importer upload [--limit n] [--publish] [--use-downsampled] [--transcripts-only] [--source voice_memos|voxterm|recorder] [--profile name] [--host url]
 listen-importer list [--limit n]
 listen-importer doctor
 ```

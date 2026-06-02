@@ -81,4 +81,54 @@ describe("ImporterStore", () => {
     expect(store.list(1)[0]!.file_name).toBe("B.WAV");
     store.close();
   });
+
+  test("filters pending uploads by Listen source", async () => {
+    tempDir = await mkdtemp(join(tmpdir(), "listen-importer-"));
+    const config: AppConfig = {
+      homeDir: tempDir,
+      dbPath: join(tempDir, "state.sqlite"),
+      mediaDir: join(tempDir, "media"),
+      downsampledDir: join(tempDir, "downsampled"),
+      transcriptsDir: join(tempDir, "transcripts"),
+      listenSqlDb: "test-db",
+      listenKvPrefix: "test-prefix",
+    };
+    const store = await openStore(config);
+    const base: ClonedRecording = {
+      id: "recorder-sha",
+      sha256: "recorder-sha",
+      sourcePath: "/Volumes/MIC MINI/A.WAV",
+      localPath: join(tempDir, "media", "recorder-sha.wav"),
+      fileName: "A.WAV",
+      extension: ".wav",
+      contentType: "audio/wav",
+      recorder: "mic-mini",
+      sizeBytes: 12,
+      recordedAt: null,
+      modifiedAt: new Date(0).toISOString(),
+    };
+    store.upsertRecording(base);
+    store.upsertRecording({
+      ...base,
+      id: "voice-sha",
+      sha256: "voice-sha",
+      sourcePath: "/Voice Memos/B.m4a",
+      localPath: join(tempDir, "media", "voice-sha.m4a"),
+      fileName: "B.m4a",
+      extension: ".m4a",
+      contentType: "audio/mp4",
+      sourceAdapter: "macos-voice-memos",
+      importType: "voice-memo-audio",
+      listenSource: "voice_memos",
+      sourceId: "voice-1",
+      recorder: "voice-memos",
+    });
+
+    expect(store.pendingUpload(10, false, "voice_memos")).toHaveLength(1);
+    expect(store.pendingUpload(10, false, "voice_memos")[0]!.file_name).toBe(
+      "B.m4a",
+    );
+    expect(store.pendingUpload(10, false, "recorder")).toHaveLength(1);
+    store.close();
+  });
 });
