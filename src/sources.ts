@@ -15,6 +15,7 @@ export type ImportSource = "voice-memos" | "voxterm";
 export interface ScanSourceOptions {
   since: Date;
   path?: string;
+  includeDeleted?: boolean;
 }
 
 interface FileCandidate {
@@ -33,9 +34,11 @@ interface VoiceMemoMetadata {
   recordedAt: string | null;
   durationSecs: number | null;
   filePath: string | null;
+  isDeleted: boolean;
 }
 
 const APPLE_EPOCH_MS = Date.UTC(2001, 0, 1);
+const VOICE_MEMOS_DELETED_FLAG = 1024;
 const VOXTERM_DEFAULT_DIR = join(homedir(), "Documents", "voxterm-transcripts");
 
 export async function scanImportSource(
@@ -93,6 +96,7 @@ async function scanVoiceMemos(
       const metadata = await voiceMemoMetadata(root);
       for (const file of files) {
         const memo = metadataForFile(metadata, file.path);
+        if (!options.includeDeleted && memo?.isDeleted) continue;
         const recordedAt =
           memo?.recordedAt ??
           file.recordedAt ??
@@ -372,7 +376,22 @@ function metadataFromRecord(
     recordedAt,
     durationSecs,
     filePath: resolveVoiceMemoPath(filePath, audioRoot),
+    isDeleted: isDeletedVoiceMemoRecord(record),
   };
+}
+
+function isDeletedVoiceMemoRecord(record: Record<string, unknown>): boolean {
+  const flags = findNumber(record, ["flags"]);
+  if (flags !== null && (flags & VOICE_MEMOS_DELETED_FLAG) !== 0) return true;
+
+  for (const [key, value] of Object.entries(record)) {
+    const lower = key.toLowerCase();
+    if (!lower.includes("delet") && !lower.includes("trash")) continue;
+    if (typeof value === "number") return value !== 0;
+    if (typeof value === "boolean") return value;
+  }
+
+  return false;
 }
 
 function metadataForFile(

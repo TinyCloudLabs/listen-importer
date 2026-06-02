@@ -69,6 +69,56 @@ describe("source scanning", () => {
     expect(files[0]!.durationSecs).toBe(12.5);
   });
 
+  test("skips deleted Voice Memos unless requested", async () => {
+    tempDir = await mkdtemp(join(tmpdir(), "listen-importer-sources-"));
+    await writeFile(join(tempDir, "active.m4a"), "active audio");
+    await writeFile(join(tempDir, "deleted.m4a"), "deleted audio");
+    const db = new Database(join(tempDir, "CloudRecordings.db"));
+    db.exec(`
+      CREATE TABLE ZCLOUDRECORDING (
+        ZUNIQUEID TEXT,
+        ZCUSTOMLABEL TEXT,
+        ZDATE REAL,
+        ZDURATION REAL,
+        ZPATH TEXT,
+        ZFLAGS INTEGER
+      )
+    `);
+    db.query(`INSERT INTO ZCLOUDRECORDING VALUES (?, ?, ?, ?, ?, ?)`).run(
+      "active-id",
+      "Active Memo",
+      appleSeconds("2026-05-25T15:00:00Z"),
+      12.5,
+      "active.m4a",
+      4,
+    );
+    db.query(`INSERT INTO ZCLOUDRECORDING VALUES (?, ?, ?, ?, ?, ?)`).run(
+      "deleted-id",
+      "Deleted Memo",
+      appleSeconds("2026-05-25T16:00:00Z"),
+      8,
+      "deleted.m4a",
+      1540,
+    );
+    db.close();
+
+    const defaultFiles = await scanImportSource("voice-memos", {
+      path: tempDir,
+      since: new Date("2026-05-25T00:00:00Z"),
+    });
+    const includingDeleted = await scanImportSource("voice-memos", {
+      path: tempDir,
+      since: new Date("2026-05-25T00:00:00Z"),
+      includeDeleted: true,
+    });
+
+    expect(defaultFiles.map((file) => file.sourceId)).toEqual(["active-id"]);
+    expect(includingDeleted.map((file) => file.sourceId)).toEqual([
+      "active-id",
+      "deleted-id",
+    ]);
+  });
+
   test("reads VoxTerm markdown transcripts as transcript imports", async () => {
     tempDir = await mkdtemp(join(tmpdir(), "listen-importer-sources-"));
     const transcriptPath = join(tempDir, "2026-05-25_101112-transcript.md");

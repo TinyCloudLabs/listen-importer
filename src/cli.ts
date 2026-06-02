@@ -107,6 +107,7 @@ async function main(): Promise<void> {
       const files = await scanImportSource(source, {
         since,
         path: stringFlag(args, "path") ?? stringFlag(args, "library"),
+        includeDeleted: Boolean(args.flags["include-deleted"]),
       });
       if (dryRun) {
         console.log(
@@ -325,7 +326,7 @@ Usage:
   listen-importer auth [--profile name] [--host url]
   listen-importer permissions [--to did] [--expiry 30d]
   listen-importer scan <path> [--recorder mic-mini|generic] [--dry-run]
-  listen-importer scan-source voice-memos|voxterm [--since yesterday|YYYY-MM-DD] [--path path] [--dry-run]
+  listen-importer scan-source voice-memos|voxterm [--since yesterday|YYYY-MM-DD] [--path path] [--include-deleted] [--dry-run]
   listen-importer status [--json]
   listen-importer list [--limit n]
   listen-importer downsample [--limit n] [--format mp3|m4a|wav] [--bitrate 64k] [--sample-rate 16000] [--force]
