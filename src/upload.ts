@@ -4,7 +4,6 @@ import { remoteKey } from "./config";
 import type { ImporterStore, RecordingRow } from "./db";
 import { audioSourceFor, type AudioSource } from "./downsample";
 import type { ListenSource } from "./listen-source";
-import type { TranscriptSegment } from "./transcription";
 import { putKvFile, putKvString, sqlExecute, type TcOptions } from "./tc";
 
 const IMPORTER_TABLE_SQL = `CREATE TABLE IF NOT EXISTS listen_importer_recording (
@@ -105,35 +104,39 @@ export async function uploadPending(
         continue;
       }
 
-      const mediaKey = audio ? mediaKeyFor(config, row, audio) : null;
-      const metadataKey = metadataKeyFor(config, row);
-      const transcriptImportKey = row.transcript_path
-        ? transcriptImportKeyFor(config, row)
+      const mediaKeyPath = audio ? mediaKeyPathFor(config, row, audio) : null;
+      const metadataKeyPath = metadataKeyPathFor(config, row);
+      const transcriptImportKeyPath = row.transcript_path
+        ? transcriptImportKeyPathFor(config, row)
         : null;
       const metadata = metadataFor(
         row,
         audio,
-        mediaKey,
-        metadataKey,
-        transcriptImportKey,
+        mediaKeyPath,
+        metadataKeyPath,
+        transcriptImportKeyPath,
       );
 
-      if (audio && mediaKey) putKvFile(mediaKey, audio.path, options);
-      if (row.transcript_path && transcriptImportKey) {
-        putKvFile(transcriptImportKey, row.transcript_path, options);
-        store.markTranscriptUploaded(row.id, transcriptImportKey);
+      if (audio && mediaKeyPath) putKvFile(mediaKeyFor(config, row, audio), audio.path, options);
+      if (row.transcript_path && transcriptImportKeyPath) {
+        putKvFile(
+          transcriptImportKeyFor(config, row),
+          row.transcript_path,
+          options,
+        );
+        store.markTranscriptUploaded(row.id, transcriptImportKeyPath);
       }
-      putKvString(metadataKey, JSON.stringify(metadata), options);
+      putKvString(metadataKeyFor(config, row), JSON.stringify(metadata), options);
       insertRemoteImporterRow(
         config,
         row,
         audio,
-        mediaKey,
-        metadataKey,
-        transcriptImportKey,
+        mediaKeyPath,
+        metadataKeyPath,
+        transcriptImportKeyPath,
         options,
       );
-      store.markUploaded(row.id, mediaKey, metadataKey);
+      store.markUploaded(row.id, mediaKeyPath, metadataKeyPath);
       result.uploaded += 1;
 
       if (options.publish) {
@@ -141,9 +144,9 @@ export async function uploadPending(
           config,
           row,
           audio,
-          mediaKey,
-          metadataKey,
-          transcriptImportKey,
+          mediaKeyPath,
+          metadataKeyPath,
+          transcriptImportKeyPath,
           options,
         );
         store.markPublished(row.id, conversationId);
@@ -177,9 +180,9 @@ function insertRemoteImporterRow(
   config: AppConfig,
   row: RecordingRow,
   audio: AudioSource | null,
-  mediaKey: string | null,
-  metadataKey: string,
-  transcriptImportKey: string | null,
+  mediaKeyPath: string | null,
+  metadataKeyPath: string,
+  transcriptImportKeyPath: string | null,
   options: TcOptions,
 ): void {
   sqlExecute(
@@ -198,9 +201,9 @@ function insertRemoteImporterRow(
       audio?.contentType ?? row.content_type,
       row.recorded_at,
       row.source_path,
-      mediaKey ?? "",
-      metadataKey,
-      transcriptImportKey,
+      mediaKeyPath ?? "",
+      metadataKeyPath,
+      transcriptImportKeyPath,
       new Date().toISOString(),
       row.transcribed_at,
       "uploaded",
@@ -213,55 +216,32 @@ async function publishConversation(
   config: AppConfig,
   row: RecordingRow,
   audio: AudioSource | null,
-  mediaKey: string | null,
-  metadataKey: string | null,
-  transcriptImportKey: string | null,
+  mediaKeyPath: string | null,
+  metadataKeyPath: string | null,
+  transcriptImportKeyPath: string | null,
   options: TcOptions,
 ): Promise<string> {
   const conversationId = conversationIdFor(row);
   const now = new Date().toISOString();
   const startedAt = row.recorded_at ?? row.modified_at ?? now;
-  const endedAt = row.duration_secs
-    ? addSeconds(startedAt, row.duration_secs)
-    : null;
   const transcript = await loadTranscript(row);
-  const metadata = {
-    import_type: row.import_type,
-    source_adapter: row.source_adapter,
-    listen_source: row.listen_source,
-    importer: "listen-importer",
-    importer_recording_id: row.id,
-    source_id: row.source_id,
-    source_uri: row.source_uri,
-    artifact_kind: row.artifact_kind,
-    original_file_name: row.file_name,
-    original_source_path: row.source_path,
-    audio_kv_key: mediaKey,
-    audio_metadata_kv_key: metadataKey,
-    audio_source_kind: audio?.kind ?? null,
-    transcript_kv_key: transcriptImportKey,
-    transcription_provider: row.transcription_provider,
-    transcribed_at: row.transcribed_at,
-    audio_content_type: audio?.contentType ?? null,
-    audio_size_bytes: audio?.sizeBytes ?? null,
-    original_audio_content_type: row.content_type,
-    original_audio_size_bytes: row.size_bytes,
-    downsampled_audio_path: row.downsampled_path,
-    downsampled_audio_size_bytes: row.downsampled_size_bytes,
-    sha256: row.sha256,
-    recorder: row.recorder,
-    source_metadata: parseMetadata(row.metadata_json),
-  };
-
-  const conversationTranscriptKey = remoteKey(
-    config,
-    `transcript/${conversationId}`,
+  const durationSecs = row.duration_secs ?? transcriptDurationSecs(transcript);
+  const endedAt = durationSecs != null ? addSeconds(startedAt, durationSecs) : null;
+  const sourceMetadata = parseMetadata(row.metadata_json);
+  const metadata = buildPublishedConversationMetadata(
+    row,
+    audio,
+    mediaKeyPath,
+    metadataKeyPath,
+    transcriptImportKeyPath,
+    sourceMetadata,
   );
-  if (row.transcript_path) {
-    putKvFile(conversationTranscriptKey, row.transcript_path, options);
-  } else {
-    putKvString(conversationTranscriptKey, JSON.stringify(transcript), options);
-  }
+
+  putKvString(
+    remoteKey(config, conversationTranscriptKeyPath(conversationId)),
+    JSON.stringify(transcript),
+    options,
+  );
   sqlExecute(
     config.listenSqlDb,
     `INSERT OR REPLACE INTO conversation (
@@ -276,7 +256,7 @@ async function publishConversation(
       null,
       startedAt,
       endedAt,
-      row.duration_secs,
+      durationSecs,
       null,
       JSON.stringify(metadata),
       now,
@@ -288,12 +268,51 @@ async function publishConversation(
   return conversationId;
 }
 
+export function buildPublishedConversationMetadata(
+  row: RecordingRow,
+  audio: AudioSource | null,
+  mediaKeyPath: string | null,
+  metadataKeyPath: string | null,
+  transcriptImportKeyPath: string | null,
+  sourceMetadata: unknown,
+): Record<string, unknown> {
+  return {
+    import_type: row.import_type,
+    source_adapter: row.source_adapter,
+    listen_source: row.listen_source,
+    importer: "listen-importer",
+    importer_recording_id: row.id,
+    source_id: row.source_id,
+    source_uri: row.source_uri,
+    artifact_kind: row.artifact_kind,
+    original_file_name: row.file_name,
+    original_source_path: row.source_path,
+    audio_kv_key: mediaKeyPath,
+    audio_data_kv_key: mediaKeyPath,
+    audio_metadata_kv_key: metadataKeyPath,
+    audio_source_kind: audio?.kind ?? null,
+    transcript_kv_key: transcriptImportKeyPath,
+    transcription_provider: row.transcription_provider,
+    transcribed_at: row.transcribed_at,
+    audio_content_type: audio?.contentType ?? null,
+    audio_size_bytes: audio?.sizeBytes ?? null,
+    original_audio_content_type: row.content_type,
+    original_audio_size_bytes: row.size_bytes,
+    downsampled_audio_path: row.downsampled_path,
+    downsampled_audio_size_bytes: row.downsampled_size_bytes,
+    sha256: row.sha256,
+    recorder: row.recorder,
+    source_metadata: sourceMetadata,
+    ...normalizeConversationMetadata(row, sourceMetadata),
+  };
+}
+
 function metadataFor(
   row: RecordingRow,
   audio: AudioSource | null,
-  mediaKey: string | null,
-  metadataKey: string,
-  transcriptKey: string | null,
+  mediaKeyPath: string | null,
+  metadataKeyPath: string,
+  transcriptKeyPath: string | null,
 ) {
   return {
     id: row.id,
@@ -318,9 +337,9 @@ function metadataFor(
     modifiedAt: row.modified_at,
     sourcePath: row.source_path,
     localPath: row.local_path,
-    mediaKvKey: mediaKey,
-    metadataKvKey: metadataKey,
-    transcriptKvKey: transcriptKey,
+    mediaKvKey: mediaKeyPath,
+    metadataKvKey: metadataKeyPath,
+    transcriptKvKey: transcriptKeyPath,
     transcriptionProvider: row.transcription_provider,
     transcribedAt: row.transcribed_at,
     durationSecs: row.duration_secs,
@@ -329,23 +348,43 @@ function metadataFor(
   };
 }
 
+export function mediaKeyPathFor(
+  config: AppConfig,
+  row: RecordingRow,
+  audio: AudioSource,
+): string {
+  return `${config.mediaKvPath}/${row.sha256.slice(0, 2)}/${row.sha256}${audio.extension}`;
+}
+
 function mediaKeyFor(
   config: AppConfig,
   row: RecordingRow,
   audio: AudioSource,
 ): string {
-  return remoteKey(
-    config,
-    `importer/media/${row.sha256.slice(0, 2)}/${row.sha256}${audio.extension}`,
-  );
+  return remoteKey(config, mediaKeyPathFor(config, row, audio));
+}
+
+export function metadataKeyPathFor(config: AppConfig, row: RecordingRow): string {
+  return `${config.metadataKvPath}/${row.sha256}.json`;
 }
 
 function metadataKeyFor(config: AppConfig, row: RecordingRow): string {
-  return remoteKey(config, `importer/metadata/${row.sha256}.json`);
+  return remoteKey(config, metadataKeyPathFor(config, row));
+}
+
+export function transcriptImportKeyPathFor(
+  config: AppConfig,
+  row: RecordingRow,
+): string {
+  return `${config.transcriptKvPath}/${row.sha256}.json`;
 }
 
 function transcriptImportKeyFor(config: AppConfig, row: RecordingRow): string {
-  return remoteKey(config, `importer/transcripts/${row.sha256}.json`);
+  return remoteKey(config, transcriptImportKeyPathFor(config, row));
+}
+
+export function conversationTranscriptKeyPath(conversationId: string): string {
+  return `transcript/${conversationId}`;
 }
 
 function titleFor(row: RecordingRow): string {
@@ -377,17 +416,79 @@ function parseMetadata(value: string | null): unknown {
   }
 }
 
-async function loadTranscript(row: RecordingRow): Promise<TranscriptSegment[]> {
+export function transcriptDurationSecs(
+  transcript: ListenTranscriptSentence[],
+): number | null {
+  const maxEnd = transcript.reduce<number | null>((max, segment) => {
+    if (typeof segment.end_time !== "number" || !Number.isFinite(segment.end_time)) {
+      return max;
+    }
+    return max == null ? segment.end_time : Math.max(max, segment.end_time);
+  }, null);
+  if (maxEnd != null) return maxEnd;
+
+  const text = transcript.map((segment) => segment.text.trim()).filter(Boolean).join(" ");
+  if (!text) return null;
+  return estimateDuration(text);
+}
+
+export function estimateDuration(text: string): number {
+  const words = text.trim().split(/\s+/).filter(Boolean).length;
+  return Math.max(4, Math.ceil(words / 2.5));
+}
+
+export interface ListenTranscriptSentence {
+  index: number;
+  speaker_id: string;
+  speaker_name: string;
+  text: string;
+  start_time: number | null;
+  end_time: number | null;
+  language: string | null;
+}
+
+async function loadTranscript(row: RecordingRow): Promise<ListenTranscriptSentence[]> {
   if (!row.transcript_path) return [];
   const raw = await Bun.file(row.transcript_path).text();
-  const parsed = JSON.parse(raw) as TranscriptSegment[];
-  return Array.isArray(parsed) ? parsed : [];
+  const parsed = JSON.parse(raw) as unknown;
+  return Array.isArray(parsed) ? normalizeTranscriptSegments(parsed) : [];
+}
+
+export function normalizeTranscriptSegments(
+  segments: any[],
+): ListenTranscriptSentence[] {
+  return segments
+    .map((segment, index) => {
+      const speakerName =
+        typeof segment?.speaker_name === "string" && segment.speaker_name.trim().length > 0
+          ? segment.speaker_name.trim()
+          : "Unknown Speaker";
+      const text = typeof segment?.text === "string" ? segment.text.trim() : "";
+      if (!text) return null;
+      const speakerId =
+        typeof segment?.speaker_id === "string" && segment.speaker_id.trim().length > 0
+          ? segment.speaker_id.trim()
+          : speakerName.toLowerCase().replace(/[^a-z0-9]+/g, "-") || `speaker-${index + 1}`;
+      return {
+        index: typeof segment?.index === "number" && Number.isFinite(segment.index) ? segment.index : index,
+        speaker_id: speakerId,
+        speaker_name: speakerName,
+        text,
+        start_time: parseTimestampToSeconds(segment?.start_time),
+        end_time: parseTimestampToSeconds(segment?.end_time),
+        language:
+          typeof segment?.language === "string" && segment.language.trim().length > 0
+            ? segment.language.trim()
+            : null,
+      };
+    })
+    .filter((segment): segment is ListenTranscriptSentence => segment !== null);
 }
 
 function insertParticipants(
   config: AppConfig,
   conversationId: string,
-  transcript: TranscriptSegment[],
+  transcript: ListenTranscriptSentence[],
   options: TcOptions,
 ): void {
   const speakers = Array.from(
@@ -421,4 +522,35 @@ function addSeconds(iso: string, seconds: number): string | null {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return null;
   return new Date(date.getTime() + seconds * 1000).toISOString();
+}
+
+export function parseTimestampToSeconds(timestamp: number | string | null | undefined): number | null {
+  if (typeof timestamp === "number" && Number.isFinite(timestamp)) {
+    return timestamp;
+  }
+  if (typeof timestamp === "string") {
+    if (timestamp.trim() === "") return null;
+    const parts = timestamp.split(":").map(Number);
+    if (parts.some(Number.isNaN)) return null;
+
+    let seconds = 0;
+    if (parts.length === 3) {
+      seconds = parts[0] * 3600 + parts[1] * 60 + parts[2];
+    } else if (parts.length === 2) {
+      seconds = parts[0] * 60 + parts[1];
+    } else if (parts.length === 1) {
+      seconds = parts[0];
+    } else {
+      return null;
+    }
+    return seconds;
+  }
+  return null;
+}
+
+export function normalizeConversationMetadata(
+  row: RecordingRow,
+  _parsedSourceMetadata: unknown,
+): Record<string, unknown> {
+  return { source_label: row.listen_source };
 }
