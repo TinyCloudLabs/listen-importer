@@ -331,10 +331,14 @@ export class ImporterStore {
   }
 
   hasSourceSnapshot(recording: RecorderFile): boolean {
+    return this.findSourceSnapshot(recording) !== null;
+  }
+
+  findSourceSnapshot(recording: RecorderFile): RecordingRow | null {
     if (recording.sourceId) {
       const row = this.db
         .query(
-          `SELECT 1 FROM recordings
+          `SELECT * FROM recordings
            WHERE source_adapter = ? AND source_id = ? AND size_bytes = ? AND modified_at = ?
            LIMIT 1`,
         )
@@ -343,18 +347,21 @@ export class ImporterStore {
           recording.sourceId,
           recording.sizeBytes,
           recording.modifiedAt,
-        );
-      return row !== null;
+        ) as RecordingRow | null;
+      return row;
     }
 
-    const row = this.db
+    return this.db
       .query(
-        `SELECT 1 FROM recordings
+        `SELECT * FROM recordings
          WHERE source_path = ? AND size_bytes = ? AND modified_at = ?
          LIMIT 1`,
       )
-      .get(recording.sourcePath, recording.sizeBytes, recording.modifiedAt);
-    return row !== null;
+      .get(
+        recording.sourcePath,
+        recording.sizeBytes,
+        recording.modifiedAt,
+      ) as RecordingRow | null;
   }
 
   counts(listenSource?: ListenSource): StatusCounts {
