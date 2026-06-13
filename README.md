@@ -41,6 +41,7 @@ listen-importer preprocess --source voice_memos
 listen-importer transcribe --source voice_memos --provider assemblyai
 listen-importer status --source voice_memos
 listen-importer upload --publish --use-downsampled --source voice_memos
+listen-importer cleanup-recorder /Volumes/MIC\ MINI
 ```
 
 Transcription uses Deepgram or AssemblyAI:
@@ -55,6 +56,31 @@ ASSEMBLYAI_API_KEY=... listen-importer transcribe --provider assemblyai
 Downsampling is non-destructive. Originals stay in `media/`; smaller derived files are written to `downsampled/`. Transcription automatically prefers downsampled audio when it exists. Uploads use originals by default, or downsampled audio with `--use-downsampled`. Use `upload --publish --transcripts-only` when you only need Listen conversation rows and transcript blobs.
 
 Use `--source recorder`, `--source voice_memos`, or `--source voxterm` on `status`, `list`, `preprocess`, `downsample`, `transcribe`, and `upload` to keep each import workflow scoped. `voice-memos` is accepted as an alias for `voice_memos`, and `--source all` is the default.
+
+## Recorder cleanup
+
+`cleanup-recorder` helps clear captured files from a mounted recorder after they are safely in the importer workflow. It is dry-run by default and only marks files eligible when they are tracked in the importer database and have a local transcript.
+
+```sh
+listen-importer cleanup-recorder /Volumes/MIC\ MINI
+listen-importer cleanup-recorder /Volumes/MIC\ MINI --verbose
+listen-importer cleanup-recorder /Volumes/MIC\ MINI --delete --confirm "MIC MINI"
+```
+
+Use the recorder volume name as the `--confirm` value. For a MIC MINI mounted by macOS as `NO NAME`, the delete command is:
+
+```sh
+listen-importer cleanup-recorder /Volumes/NO\ NAME --delete --confirm "NO NAME"
+```
+
+Untranscribed or untracked files are blocked by default. To delete those too, the command requires both an explicit inclusion flag and an extra risky confirmation:
+
+```sh
+listen-importer cleanup-recorder /Volumes/NO\ NAME --delete --confirm "NO NAME" --include-untranscribed --confirm-risky delete-unverified
+listen-importer cleanup-recorder /Volumes/NO\ NAME --delete --confirm "NO NAME" --include-untracked --confirm-risky delete-unverified
+```
+
+`--include-untranscribed` means files are tracked locally but do not have a transcript yet. `--include-untracked` means files were found on the recorder but were not matched to the importer database.
 
 ## Local sources
 
@@ -78,6 +104,7 @@ listen-importer init
 listen-importer auth [--profile name] [--host url]
 listen-importer permissions [--to did] [--expiry 30d]
 listen-importer scan <path> [--recorder mic-mini|generic] [--dry-run]
+listen-importer cleanup-recorder <path> [--recorder mic-mini|generic] [--delete] [--confirm volume-name] [--include-untranscribed] [--include-untracked] [--confirm-risky delete-unverified] [--json] [--verbose]
 listen-importer scan-source voice-memos|voxterm [--since yesterday|YYYY-MM-DD] [--path path] [--include-deleted] [--dry-run]
 listen-importer status [--source recorder|voice_memos|voxterm|all] [--json]
 listen-importer list [--limit n] [--source recorder|voice_memos|voxterm|all]
