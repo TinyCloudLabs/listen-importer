@@ -28,6 +28,15 @@ Remote defaults:
 - TinyCloud profile: `tc` default profile
 - Listen SQL db: `xyz.tinycloud.listen/conversations`
 - Listen KV prefix: `xyz.tinycloud.listen`
+- Listen app space: `applications`
+
+Listen is a manifest app. Published conversation rows, participant rows, and
+`transcript/{conversationId}` blobs are written to the `applications` space so
+Listen and Feed read the same canonical data. Importer media and metadata blobs
+remain under the existing `xyz.tinycloud.listen/importer/...` KV paths. Override
+the app space with `LISTEN_IMPORTER_APP_SPACE`; publishing requires a `tc` CLI
+with `kv --space` support. This package pins `@tinycloud/cli@0.6.0` and prefers
+that local binary when available; override with `LISTEN_IMPORTER_TC_PATH`.
 
 ## Usage
 

@@ -1,0 +1,116 @@
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+
+const spawnSync = mock(() => ({
+  status: 0,
+  stdout: "",
+  stderr: "",
+}));
+
+mock.module("node:child_process", () => ({ spawnSync }));
+
+const { openStore } = await import("../src/db");
+const { uploadPending } = await import("../src/upload");
+
+type SpawnCall = [string, string[], unknown?];
+
+let tempDir: string | null = null;
+
+beforeEach(() => {
+  spawnSync.mockClear();
+});
+
+afterEach(async () => {
+  if (tempDir) await rm(tempDir, { recursive: true, force: true });
+  tempDir = null;
+});
+
+describe("upload", () => {
+  test("publishes Listen conversations and transcripts to the app space", async () => {
+    tempDir = await mkdtemp(join(tmpdir(), "listen-importer-upload-"));
+    const transcriptPath = join(tempDir, "transcript.json");
+    await writeFile(
+      transcriptPath,
+      JSON.stringify([
+        {
+          speaker_name: "Speaker A",
+          text: " Hello there ",
+          start_time: 1,
+          end_time: 2,
+        },
+      ]),
+    );
+
+    const config = {
+      homeDir: tempDir,
+      dbPath: join(tempDir, "state.sqlite"),
+      mediaDir: join(tempDir, "media"),
+      downsampledDir: join(tempDir, "downsampled"),
+      transcriptsDir: join(tempDir, "transcripts"),
+      listenSqlDb: "test-prefix/conversations",
+      listenKvPrefix: "test-prefix",
+      listenAppSpace: "applications",
+    };
+    const store = await openStore(config);
+    const sha256 =
+      "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890";
+
+    store.upsertRecording({
+      id: sha256,
+      sha256,
+      sourcePath: "/Volumes/MIC MINI/A.WAV",
+      localPath: join(tempDir, "media", "sha.wav"),
+      fileName: "A.WAV",
+      extension: ".wav",
+      contentType: "audio/wav",
+      recorder: "mic-mini",
+      sizeBytes: 12,
+      recordedAt: "2026-01-01T00:00:00.000Z",
+      modifiedAt: "2026-01-01T00:00:00.000Z",
+      transcriptPath,
+      durationSecs: 1,
+    });
+
+    const result = await uploadPending(config, store, 1, {
+      publish: true,
+      transcriptsOnly: true,
+      listenSource: "recorder",
+    });
+    store.close();
+
+    expect(result).toEqual({ uploaded: 0, published: 1, failed: 0 });
+
+    const calls = spawnSync.mock.calls as unknown as SpawnCall[];
+    const transcriptCall = calls.find(([, argv]) => {
+      return (
+        argv[0] === "kv" &&
+        argv[1] === "put" &&
+        argv[2] === "test-prefix/transcript/rec-abcdef1234567890abcdef12"
+      );
+    });
+    expect(transcriptCall).toBeDefined();
+    const transcriptArgs = transcriptCall![1];
+    expect(transcriptArgs.slice(-2)).toEqual(["--space", "applications"]);
+    expect(JSON.parse(transcriptArgs[3]!)).toEqual([
+      {
+        index: 0,
+        speaker_id: "speaker-a",
+        speaker_name: "Speaker A",
+        text: "Hello there",
+        start_time: 1,
+        end_time: 2,
+        language: null,
+      },
+    ]);
+
+    const sqlCalls = calls.filter(([, argv]) => {
+      return argv[0] === "sql" && argv[1] === "execute";
+    });
+    expect(sqlCalls.length).toBeGreaterThan(0);
+    for (const [, args] of sqlCalls) {
+      expect(args.slice(-2)).toEqual(["--space", "applications"]);
+    }
+  });
+});
