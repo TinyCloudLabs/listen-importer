@@ -65,6 +65,16 @@ export interface UploadResult {
   failed: number;
 }
 
+interface PublishedTranscriptSegment {
+  index: number;
+  speaker_id: string;
+  speaker_name: string;
+  text: string;
+  start_time: number | null;
+  end_time: number | null;
+  language: string | null;
+}
+
 export async function uploadPending(
   config: AppConfig,
   store: ImporterStore,
@@ -75,7 +85,8 @@ export async function uploadPending(
     throw new Error("--transcripts-only requires --publish");
   }
   if (!options.transcriptsOnly) ensureRemoteImporterSchema(config, options);
-  if (options.publish) ensureConversationSchema(config, options);
+  if (options.publish)
+    ensureConversationSchema(config, appSpaceOptions(config, options));
 
   const rows = store.pendingUpload(
     limit,
@@ -257,11 +268,12 @@ async function publishConversation(
     config,
     `transcript/${conversationId}`,
   );
-  if (row.transcript_path) {
-    putKvFile(conversationTranscriptKey, row.transcript_path, options);
-  } else {
-    putKvString(conversationTranscriptKey, JSON.stringify(transcript), options);
-  }
+  const appOptions = appSpaceOptions(config, options);
+  putKvString(
+    conversationTranscriptKey,
+    `${JSON.stringify(transcript, null, 2)}\n`,
+    appOptions,
+  );
   sqlExecute(
     config.listenSqlDb,
     `INSERT OR REPLACE INTO conversation (
@@ -282,9 +294,9 @@ async function publishConversation(
       now,
       now,
     ],
-    options,
+    appOptions,
   );
-  insertParticipants(config, conversationId, transcript, options);
+  insertParticipants(config, conversationId, transcript, appOptions);
   return conversationId;
 }
 
@@ -377,17 +389,19 @@ function parseMetadata(value: string | null): unknown {
   }
 }
 
-async function loadTranscript(row: RecordingRow): Promise<TranscriptSegment[]> {
+async function loadTranscript(
+  row: RecordingRow,
+): Promise<PublishedTranscriptSegment[]> {
   if (!row.transcript_path) return [];
   const raw = await Bun.file(row.transcript_path).text();
   const parsed = JSON.parse(raw) as TranscriptSegment[];
-  return Array.isArray(parsed) ? parsed : [];
+  return Array.isArray(parsed) ? normalizeTranscriptSegments(parsed) : [];
 }
 
 function insertParticipants(
   config: AppConfig,
   conversationId: string,
-  transcript: TranscriptSegment[],
+  transcript: PublishedTranscriptSegment[],
   options: TcOptions,
 ): void {
   const speakers = Array.from(
@@ -415,6 +429,55 @@ function insertParticipants(
       options,
     );
   }
+}
+
+function normalizeTranscriptSegments(
+  transcript: TranscriptSegment[],
+): PublishedTranscriptSegment[] {
+  return transcript
+    .map((segment, index) => {
+      const text = typeof segment.text === "string" ? segment.text.trim() : "";
+      if (!text) return null;
+      const speakerName =
+        typeof segment.speaker_name === "string" &&
+        segment.speaker_name.trim().length > 0
+          ? segment.speaker_name.trim()
+          : "Speaker";
+
+      return {
+        index,
+        speaker_id: speakerIdFor(speakerName, index),
+        speaker_name: speakerName,
+        text,
+        start_time: numberOrNull(segment.start_time),
+        end_time: numberOrNull(segment.end_time),
+        language:
+          typeof segment.language === "string" && segment.language.length > 0
+            ? segment.language
+            : null,
+      };
+    })
+    .filter(
+      (segment): segment is PublishedTranscriptSegment => segment !== null,
+    );
+}
+
+function speakerIdFor(speakerName: string, index: number): string {
+  return (
+    speakerName.toLowerCase().replace(/[^a-z0-9]+/g, "-") ||
+    `speaker-${index + 1}`
+  );
+}
+
+function numberOrNull(value: number | null | undefined): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function appSpaceOptions(
+  config: Pick<AppConfig, "listenAppSpace">,
+  options: TcOptions,
+): TcOptions {
+  return { ...options, space: config.listenAppSpace };
 }
 
 function addSeconds(iso: string, seconds: number): string | null {

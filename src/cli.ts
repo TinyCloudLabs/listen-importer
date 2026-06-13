@@ -230,6 +230,7 @@ async function main(): Promise<void> {
       console.log(`Transcripts: ${config.transcriptsDir}`);
       console.log(`Listen SQL DB: ${config.listenSqlDb}`);
       console.log(`Listen KV prefix: ${config.listenKvPrefix}`);
+      console.log(`Listen app space: ${config.listenAppSpace}`);
       try {
         console.log(authStatus(tcOptions(args)));
       } catch (err) {

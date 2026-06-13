@@ -3,6 +3,7 @@ import { join, resolve } from "node:path";
 
 export const DEFAULT_LISTEN_SQL_DB = "xyz.tinycloud.listen/conversations";
 export const DEFAULT_LISTEN_KV_PREFIX = "xyz.tinycloud.listen";
+export const DEFAULT_LISTEN_APP_SPACE = "applications";
 
 export interface AppConfig {
   homeDir: string;
@@ -12,6 +13,7 @@ export interface AppConfig {
   transcriptsDir: string;
   listenSqlDb: string;
   listenKvPrefix: string;
+  listenAppSpace: string;
 }
 
 export function getConfig(): AppConfig {
@@ -23,6 +25,8 @@ export function getConfig(): AppConfig {
   const listenKvPrefix = stripSlashes(
     process.env.LISTEN_IMPORTER_KV_PREFIX || DEFAULT_LISTEN_KV_PREFIX,
   );
+  const listenAppSpace =
+    process.env.LISTEN_IMPORTER_APP_SPACE || DEFAULT_LISTEN_APP_SPACE;
 
   return {
     homeDir,
@@ -32,6 +36,7 @@ export function getConfig(): AppConfig {
     transcriptsDir: join(homeDir, "transcripts"),
     listenSqlDb,
     listenKvPrefix,
+    listenAppSpace,
   };
 }
 
