@@ -1,5 +1,11 @@
 #!/usr/bin/env bun
 import { mkdir } from "node:fs/promises";
+import {
+  cleanupRecorderCaptures,
+  expectedRecorderConfirmation,
+  riskyCleanupConfirmation,
+  type CleanupRecorderResult,
+} from "./cleanup";
 import { getConfig } from "./config";
 import {
   downsamplePending,
@@ -127,6 +133,26 @@ async function main(): Promise<void> {
       console.log(
         `Scanned ${files.length} ${source} item(s) since ${formatSince(since)}: ${result.created} new, ${result.updated} updated, ${result.skipped} unchanged`,
       );
+      break;
+    }
+
+    case "cleanup-recorder":
+    case "delete-recorder-captures": {
+      const rootPath = args.positionals[0];
+      if (!rootPath)
+        throw new Error(`${args.command} requires a recorder path`);
+      const store = await openStore(config);
+      const result = await cleanupRecorderCaptures(store, rootPath, {
+        recorder: stringFlag(args, "recorder"),
+        deleteFiles: Boolean(args.flags.delete),
+        confirm: stringFlag(args, "confirm"),
+        includeUntranscribed: Boolean(args.flags["include-untranscribed"]),
+        includeUntracked: Boolean(args.flags["include-untracked"]),
+        confirmRisky: stringFlag(args, "confirm-risky"),
+      });
+      store.close();
+      if (args.flags.json) console.log(JSON.stringify(result, null, 2));
+      else printCleanupRecorderResult(result, Boolean(args.flags.verbose));
       break;
     }
 
@@ -341,6 +367,7 @@ Usage:
   listen-importer auth [--profile name] [--host url]
   listen-importer permissions [--to did] [--expiry 30d]
   listen-importer scan <path> [--recorder mic-mini|generic] [--dry-run]
+  listen-importer cleanup-recorder <path> [--recorder mic-mini|generic] [--delete] [--confirm volume-name] [--include-untranscribed] [--include-untracked] [--confirm-risky delete-unverified] [--json] [--verbose]
   listen-importer scan-source voice-memos|voxterm|soundcore-sync [--since yesterday|YYYY-MM-DD] [--path path] [--include-deleted] [--dry-run]
   listen-importer status [--source recorder|voice_memos|voxterm|soundcore_sync|all] [--json]
   listen-importer list [--limit n] [--source recorder|voice_memos|voxterm|soundcore_sync|all]
@@ -350,6 +377,45 @@ Usage:
   listen-importer upload [--limit n] [--publish] [--use-downsampled] [--transcripts-only] [--source recorder|voice_memos|voxterm|soundcore_sync|all] [--profile name] [--host url]
   listen-importer doctor
 `);
+}
+
+function printCleanupRecorderResult(
+  result: CleanupRecorderResult,
+  verbose: boolean,
+): void {
+  const confirm = expectedRecorderConfirmation(result.rootPath);
+  console.log(
+    `Recorder cleanup scan: ${result.scanned} file(s) under ${result.rootPath} (${result.recorder})`,
+  );
+  console.log(`Eligible: ${result.eligible}`);
+  console.log(`Deleted: ${result.deleted}`);
+  console.log(
+    `Blocked: ${result.blockedUntranscribed} untranscribed, ${result.blockedUntracked} untracked`,
+  );
+  console.log(`Failed: ${result.failed}`);
+  if (result.dryRun) {
+    console.log(
+      `Dry run. To delete eligible transcribed files, rerun with --delete --confirm ${JSON.stringify(confirm)}.`,
+    );
+    console.log(
+      `To also delete untranscribed or untracked files, add --include-untranscribed or --include-untracked plus --confirm-risky ${riskyCleanupConfirmation()}.`,
+    );
+  }
+
+  if (!verbose) return;
+  for (const entry of result.entries) {
+    const action = entry.deleted
+      ? "deleted"
+      : entry.eligible
+        ? result.dryRun
+          ? "would-delete"
+          : "kept"
+        : "blocked";
+    const error = entry.error ? ` (${entry.error})` : "";
+    console.log(
+      `${action.padEnd(12)} ${entry.reason.padEnd(13)} ${entry.fileName}${error}`,
+    );
+  }
 }
 
 main().catch((err) => {
