@@ -9,9 +9,20 @@ export interface TcOptions {
   space?: string;
 }
 
+export interface TcSecretOptions extends TcOptions {
+  scope?: string;
+}
+
 export interface TcRunResult {
   stdout: string;
   stderr: string;
+}
+
+export interface SecretsNetworkStatus {
+  networkId: string | null;
+  exists: boolean;
+  state: string | null;
+  name: string | null;
 }
 
 export function runTc(args: string[], options: TcOptions = {}): TcRunResult {
@@ -43,8 +54,8 @@ export function runTc(args: string[], options: TcOptions = {}): TcRunResult {
 }
 
 function tcExecutable(): string {
-  if (process.env.LISTEN_IMPORTER_TC_PATH) {
-    return process.env.LISTEN_IMPORTER_TC_PATH;
+  if (process.env.LISTEN_TC_PATH) {
+    return process.env.LISTEN_TC_PATH;
   }
 
   const localBinName = process.platform === "win32" ? "tc.cmd" : "tc";
@@ -115,4 +126,77 @@ export function createDelegation(
     ],
     options,
   ).stdout.trim();
+}
+
+export function getSecret(
+  name: string,
+  options: TcSecretOptions = {},
+): string | undefined {
+  try {
+    const result = runTc(
+      [
+        "secrets",
+        "get",
+        name,
+        "--raw",
+        ...(options.scope ? ["--scope", options.scope] : []),
+      ],
+      options,
+    );
+    return result.stdout.trim();
+  } catch (err) {
+    if (isTcNotFoundError(err)) return undefined;
+    throw err;
+  }
+}
+
+export function ensureSecretsNetwork(options: TcSecretOptions = {}): string {
+  return runTc(["secrets", "network", "init"], options).stdout.trim();
+}
+
+export function secretsNetworkStatus(
+  options: TcSecretOptions = {},
+): SecretsNetworkStatus {
+  const result = runTc(["secrets", "network", "show"], options);
+  const parsed = JSON.parse(result.stdout) as {
+    networkId?: string;
+    exists?: boolean;
+    descriptor?: { state?: string; name?: string };
+  };
+  return {
+    networkId: parsed.networkId ?? null,
+    exists: parsed.exists === true,
+    state: parsed.descriptor?.state ?? null,
+    name: parsed.descriptor?.name ?? null,
+  };
+}
+
+export function requestCapabilities(
+  capabilities: string[],
+  options: TcOptions & {
+    expiry?: string;
+    grant?: boolean;
+    yes?: boolean;
+  } = {},
+): string {
+  return runTc(
+    [
+      "auth",
+      "request",
+      ...capabilities.flatMap((capability) => ["--cap", capability]),
+      ...(options.expiry ? ["--expiry", options.expiry] : []),
+      ...(options.grant ? ["--grant"] : []),
+      ...(options.yes ? ["--yes"] : []),
+    ],
+    options,
+  ).stdout.trim();
+}
+
+function isTcNotFoundError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return (
+    message.includes('"code": "NOT_FOUND"') ||
+    message.includes('"code": "KEY_NOT_FOUND"') ||
+    (message.includes("Secret ") && message.includes(" not found"))
+  );
 }

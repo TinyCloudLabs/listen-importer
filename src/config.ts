@@ -5,6 +5,7 @@ export const DEFAULT_LISTEN_APP_ID = "xyz.tinycloud.listen";
 export const DEFAULT_LISTEN_SQL_DB = `${DEFAULT_LISTEN_APP_ID}/conversations`;
 export const DEFAULT_LISTEN_KV_PREFIX = DEFAULT_LISTEN_APP_ID;
 export const DEFAULT_LISTEN_APP_SPACE = "applications";
+export const DEFAULT_LISTEN_SECRET_SCOPE = "listen";
 
 export interface AppConfig {
   homeDir: string;
@@ -16,6 +17,7 @@ export interface AppConfig {
   listenSqlDb: string;
   listenKvPrefix: string;
   listenAppSpace: string;
+  listenSecretScope: string;
   mediaKvPath: string;
   metadataKvPath: string;
   transcriptKvPath: string;
@@ -23,31 +25,31 @@ export interface AppConfig {
 
 export function getConfig(): AppConfig {
   const homeDir = resolve(
-    process.env.LISTEN_IMPORTER_HOME || join(homedir(), ".listen-importer"),
+    process.env.LISTEN_HOME || join(homedir(), ".listen"),
   );
-  const listenAppId =
-    process.env.LISTEN_IMPORTER_APP_ID || DEFAULT_LISTEN_APP_ID;
+  const listenAppId = process.env.LISTEN_APP_ID || DEFAULT_LISTEN_APP_ID;
   const listenSqlDb =
-    process.env.LISTEN_IMPORTER_SQL_DB ||
-    remoteSqlDb({ listenAppId }, "conversations");
+    process.env.LISTEN_SQL_DB || remoteSqlDb({ listenAppId }, "conversations");
   const listenKvPrefix = stripSlashes(
-    process.env.LISTEN_IMPORTER_KV_PREFIX || listenAppId,
+    process.env.LISTEN_KV_PREFIX || listenAppId,
   );
   const listenAppSpace =
-    process.env.LISTEN_IMPORTER_APP_SPACE || DEFAULT_LISTEN_APP_SPACE;
+    process.env.LISTEN_APP_SPACE || DEFAULT_LISTEN_APP_SPACE;
+  const listenSecretScope =
+    process.env.LISTEN_SECRET_SCOPE || DEFAULT_LISTEN_SECRET_SCOPE;
   const mediaKvPath = stripSlashes(
-    process.env.LISTEN_IMPORTER_MEDIA_KV_PATH || "importer/media",
+    process.env.LISTEN_MEDIA_KV_PATH || "importer/media",
   );
   const metadataKvPath = stripSlashes(
-    process.env.LISTEN_IMPORTER_METADATA_KV_PATH || "importer/metadata",
+    process.env.LISTEN_METADATA_KV_PATH || "importer/metadata",
   );
   const transcriptKvPath = stripSlashes(
-    process.env.LISTEN_IMPORTER_TRANSCRIPT_KV_PATH || "importer/transcripts",
+    process.env.LISTEN_TRANSCRIPT_KV_PATH || "importer/transcripts",
   );
 
   return {
     homeDir,
-    dbPath: join(homeDir, "listen-importer.sqlite"),
+    dbPath: join(homeDir, "listen.sqlite"),
     mediaDir: join(homeDir, "media"),
     downsampledDir: join(homeDir, "downsampled"),
     transcriptsDir: join(homeDir, "transcripts"),
@@ -55,6 +57,7 @@ export function getConfig(): AppConfig {
     listenSqlDb,
     listenKvPrefix,
     listenAppSpace,
+    listenSecretScope,
     mediaKvPath,
     metadataKvPath,
     transcriptKvPath,

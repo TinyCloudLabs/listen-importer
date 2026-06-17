@@ -1,7 +1,7 @@
-import { Database } from "bun:sqlite";
+import Database from "better-sqlite3";
 import { homedir } from "node:os";
 import { basename, dirname, extname, join, relative, resolve } from "node:path";
-import { readdir, stat } from "node:fs/promises";
+import { readFile, readdir, stat } from "node:fs/promises";
 import {
   AUDIO_EXTENSIONS,
   contentTypeForExtension,
@@ -163,9 +163,7 @@ async function scanVoxTerm(
   options: ScanSourceOptions,
 ): Promise<RecorderFile[]> {
   const root = resolve(
-    options.path ??
-      process.env.LISTEN_IMPORTER_VOXTERM_DIR ??
-      VOXTERM_DEFAULT_DIR,
+    options.path ?? process.env.LISTEN_VOXTERM_DIR ?? VOXTERM_DEFAULT_DIR,
   );
   const files = await listFiles(
     root,
@@ -176,7 +174,7 @@ async function scanVoxTerm(
   for (const path of files) {
     if (path.split(/[\\/]/).some((part) => part.startsWith("."))) continue;
     const stats = await stat(path);
-    const raw = await Bun.file(path).text();
+    const raw = await readFile(path, "utf8");
     const recordedAt =
       voxTermStartedAt(path, raw) ?? stats.birthtime?.toISOString() ?? null;
     if (!isOnOrAfter(recordedAt, options.since)) continue;
@@ -218,7 +216,7 @@ async function scanSoundcoreSync(
 ): Promise<RecorderFile[]> {
   const root = resolve(
     options.path ??
-      process.env.LISTEN_IMPORTER_SOUNDCORE_SYNC_DIR ??
+      process.env.LISTEN_SOUNDCORE_SYNC_DIR ??
       SOUNDCORE_SYNC_DEFAULT_DIR,
   );
   const files = await listFiles(
@@ -277,7 +275,7 @@ async function scanSoundcoreSync(
 
 function voiceMemoRoots(pathOverride: string | undefined): string[] {
   if (pathOverride) return [resolve(pathOverride)];
-  const envPath = process.env.LISTEN_IMPORTER_VOICE_MEMOS_LIBRARY;
+  const envPath = process.env.LISTEN_VOICE_MEMOS_LIBRARY;
   if (envPath) return [resolve(envPath)];
 
   return [
@@ -386,20 +384,20 @@ function readVoiceMemoDatabase(
   const db = new Database(dbPath, { readonly: true });
   try {
     const tables = db
-      .query(
+      .prepare(
         `SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'`,
       )
       .all() as Array<{ name: string }>;
     const rows: VoiceMemoMetadata[] = [];
     for (const table of tables) {
       const columns = db
-        .query(`PRAGMA table_info(${quoteIdent(table.name)})`)
+        .prepare(`PRAGMA table_info(${quoteIdent(table.name)})`)
         .all() as Array<{
         name: string;
       }>;
       if (!looksLikeVoiceMemoTable(columns)) continue;
       const records = db
-        .query(`SELECT * FROM ${quoteIdent(table.name)}`)
+        .prepare(`SELECT * FROM ${quoteIdent(table.name)}`)
         .all() as Array<Record<string, unknown>>;
       for (const record of records) {
         const metadata = metadataFromRecord(record, audioRoot);

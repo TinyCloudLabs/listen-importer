@@ -6,8 +6,8 @@
 
 set -u
 
-DB="${LISTEN_IMPORTER_SQL_DB:-xyz.tinycloud.listen/conversations}"
-PROFILE="${LISTEN_IMPORTER_PROFILE:-}"
+DB="${LISTEN_SQL_DB:-xyz.tinycloud.listen/conversations}"
+PROFILE="${LISTEN_PROFILE:-}"
 
 run() {
   local stmt="$1"

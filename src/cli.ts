@@ -1,4 +1,4 @@
-#!/usr/bin/env bun
+#!/usr/bin/env node
 import { mkdir } from "node:fs/promises";
 import {
   cleanupRecorderCaptures,
@@ -21,9 +21,24 @@ import {
   parseSince,
   scanImportSource,
 } from "./sources";
-import { authStatus, createDelegation, type TcOptions } from "./tc";
+import {
+  formatStateMigrationResult,
+  migrateListenState,
+} from "./state-migration";
+import {
+  authStatus,
+  createDelegation,
+  ensureSecretsNetwork,
+  getSecret,
+  requestCapabilities,
+  secretsNetworkStatus,
+  type SecretsNetworkStatus,
+  type TcOptions,
+} from "./tc";
 import { transcribePending, type TranscriptionProvider } from "./transcription";
 import { uploadPending } from "./upload";
+
+const COMMAND = "listen";
 
 interface ParsedArgs {
   command: string;
@@ -55,13 +70,56 @@ async function main(): Promise<void> {
     case "permissions": {
       const to = stringFlag(args, "to");
       const expiry = stringFlag(args, "expiry") ?? "30d";
+      const capabilities = listenCapabilities(config);
+      const secretScope =
+        stringFlag(args, "secret-scope") ?? config.listenSecretScope;
+      const includeSecrets = !Boolean(args.flags["no-secrets"]);
+      const secretCommand = `tc secrets put ASSEMBLYAI_API_KEY "$ASSEMBLYAI_API_KEY" --scope ${secretScope}`;
+      const networkStatus = includeSecrets
+        ? readSecretsNetworkStatus(tcOptions(args))
+        : null;
+      if (args.flags.grant) {
+        console.log(
+          requestCapabilities(capabilities, {
+            ...tcOptions(args),
+            expiry,
+            grant: true,
+            yes: Boolean(args.flags.yes),
+          }),
+        );
+        if (includeSecrets) {
+          if (!networkStatus?.exists) ensureSecretsNetwork(tcOptions(args));
+          const secret = getSecret("ASSEMBLYAI_API_KEY", {
+            ...tcOptions(args),
+            scope: secretScope,
+          });
+          if (secret) {
+            console.log(
+              `Granted access to ASSEMBLYAI_API_KEY in TinyCloud secrets scope ${secretScope}`,
+            );
+          } else {
+            console.log(
+              `ASSEMBLYAI_API_KEY is not stored yet. Store it with: ${secretCommand}`,
+            );
+          }
+        }
+        break;
+      }
       if (!to) {
         console.log("Required TinyCloud capabilities:");
-        console.log(`- KV get/put/list under ${config.listenKvPrefix}/`);
-        console.log(
-          `- SQL read/write on ${config.listenSqlDb} from your authenticated tc profile`,
-        );
-        console.log("Pass --to <did> to create the KV delegation with tc.");
+        for (const capability of capabilities) console.log(`- ${capability}`);
+        if (includeSecrets) {
+          console.log(
+            `- ASSEMBLYAI_API_KEY from tc secrets scope ${secretScope}`,
+          );
+          console.log("");
+          printSecretSetup(secretScope, networkStatus);
+        }
+        console.log("");
+        console.log("Grant them to the active TinyCloud profile with:");
+        console.log("listen permissions --grant");
+        console.log("");
+        console.log("Pass --to <did> to create the legacy KV delegation only.");
         break;
       }
       const output = createDelegation(
@@ -192,8 +250,7 @@ async function main(): Promise<void> {
       break;
     }
 
-    case "downsample":
-    case "preprocess": {
+    case "downsample": {
       const limit = numberFlag(args, "limit") ?? 25;
       const source = sourceFlag(args);
       const store = await openStore(config);
@@ -206,9 +263,7 @@ async function main(): Promise<void> {
         listenSource: source,
       });
       store.close();
-      const verb =
-        args.command === "preprocess" ? "Preprocessed" : "Downsampled";
-      console.log(`${verb} ${result.downsampled}; failed ${result.failed}`);
+      console.log(`Downsampled ${result.downsampled}; failed ${result.failed}`);
       break;
     }
 
@@ -224,6 +279,8 @@ async function main(): Promise<void> {
         model: stringFlag(args, "model"),
         language: stringFlag(args, "language"),
         listenSource: source,
+        secretScope: stringFlag(args, "secret-scope"),
+        tcOptions: tcOptions(args),
       });
       store.close();
       console.log(`Transcribed ${result.transcribed}; failed ${result.failed}`);
@@ -247,20 +304,99 @@ async function main(): Promise<void> {
       break;
     }
 
+    case "migrate-state": {
+      const result = await migrateListenState({
+        from: stringFlag(args, "from"),
+        to: stringFlag(args, "to"),
+        dryRun: Boolean(args.flags["dry-run"]),
+      });
+      console.log(formatStateMigrationResult(result));
+      if (result.reason === "target_exists") process.exitCode = 1;
+      break;
+    }
+
     case "doctor": {
+      const secretScope =
+        stringFlag(args, "secret-scope") ?? config.listenSecretScope;
       await openStore(config).then((store) => store.close());
-      console.log(`State: ${config.homeDir}`);
-      console.log(`Database: ${config.dbPath}`);
-      console.log(`Media: ${config.mediaDir}`);
-      console.log(`Downsampled: ${config.downsampledDir}`);
-      console.log(`Transcripts: ${config.transcriptsDir}`);
-      console.log(`Listen SQL DB: ${config.listenSqlDb}`);
-      console.log(`Listen KV prefix: ${config.listenKvPrefix}`);
-      console.log(`Listen app space: ${config.listenAppSpace}`);
+      console.log("Local");
+      console.log(`  State: ${config.homeDir}`);
+      console.log(`  Database: ${config.dbPath}`);
+      console.log(`  Media: ${config.mediaDir}`);
+      console.log(`  Downsampled: ${config.downsampledDir}`);
+      console.log(`  Transcripts: ${config.transcriptsDir}`);
+      console.log("");
+      console.log("Listen");
+      console.log(`  SQL DB: ${config.listenSqlDb}`);
+      console.log(`  KV prefix: ${config.listenKvPrefix}`);
+      console.log(`  App space: ${config.listenAppSpace}`);
+      console.log(`  Secret scope: ${secretScope}`);
+      console.log("");
+      console.log("TinyCloud");
       try {
-        console.log(authStatus(tcOptions(args)));
+        const status = authStatus(tcOptions(args));
+        printDoctorCheck("TinyCloud auth", "ok", summarizeAuthStatus(status));
       } catch (err) {
-        console.log(err instanceof Error ? err.message : String(err));
+        printDoctorCheck("TinyCloud auth", "warn", messageFromError(err));
+      }
+      const assemblyEnv = Boolean(
+        process.env.ASSEMBLYAI_API_KEY || process.env.ASSEMBLY_API_KEY,
+      );
+      const deepgramEnv = Boolean(process.env.DEEPGRAM_API_KEY);
+      if (assemblyEnv) {
+        printDoctorCheck("AssemblyAI env key", "ok", "ASSEMBLYAI_API_KEY set");
+      } else {
+        printDoctorCheck("AssemblyAI env key", "warn", "not set");
+      }
+      if (deepgramEnv) {
+        printDoctorCheck("Deepgram env key", "ok", "DEEPGRAM_API_KEY set");
+      }
+
+      console.log("");
+      console.log("Secrets");
+      const networkStatus = readSecretsNetworkStatus(tcOptions(args));
+      if (networkStatus?.exists) {
+        printDoctorCheck(
+          "Encryption network",
+          "ok",
+          formatSecretsNetwork(networkStatus),
+        );
+      } else {
+        printDoctorCheck(
+          "Encryption network",
+          "warn",
+          networkStatus
+            ? "default network missing"
+            : "could not read default network",
+        );
+      }
+
+      try {
+        const secret = getSecret("ASSEMBLYAI_API_KEY", {
+          ...tcOptions(args),
+          scope: secretScope,
+        });
+        if (secret) {
+          printDoctorCheck(
+            "AssemblyAI TinyCloud secret",
+            "ok",
+            `ASSEMBLYAI_API_KEY in scope ${secretScope}`,
+          );
+        } else {
+          printDoctorCheck(
+            "AssemblyAI TinyCloud secret",
+            "warn",
+            `missing in scope ${secretScope}`,
+          );
+          printSecretSetup(secretScope, networkStatus);
+        }
+      } catch (err) {
+        printDoctorCheck(
+          "AssemblyAI TinyCloud secret",
+          "warn",
+          messageFromError(err),
+        );
+        printSecretSetup(secretScope, networkStatus);
       }
       break;
     }
@@ -273,7 +409,9 @@ async function main(): Promise<void> {
 }
 
 function parseArgs(argv: string[]): ParsedArgs {
-  const [command = "help", ...rest] = argv;
+  const [rawCommand = "help", ...rest] = argv;
+  const command =
+    rawCommand === "--help" || rawCommand === "-h" ? "help" : rawCommand;
   const flags: Record<string, string | boolean> = {};
   const positionals: string[] = [];
 
@@ -307,6 +445,13 @@ function tcOptions(args: ParsedArgs): TcOptions {
     profile: stringFlag(args, "profile"),
     host: stringFlag(args, "host"),
   };
+}
+
+function listenCapabilities(config: ReturnType<typeof getConfig>): string[] {
+  return [
+    `tinycloud.kv:${config.listenAppSpace}:${config.listenKvPrefix}/:get,put,list`,
+    `tinycloud.sql:${config.listenAppSpace}:${config.listenSqlDb}:read,write`,
+  ];
 }
 
 async function cacheFiles(
@@ -359,23 +504,107 @@ function sourceFlag(args: ParsedArgs): ReturnType<typeof parseListenSource> {
   return parseListenSource(stringFlag(args, "source"));
 }
 
+function printDoctorCheck(
+  label: string,
+  status: "ok" | "warn",
+  detail: string,
+): void {
+  console.log(`${status.toUpperCase()} ${label}: ${detail}`);
+}
+
+function printSecretSetup(
+  scope: string,
+  networkStatus: SecretsNetworkStatus | null,
+): void {
+  console.log("Secret setup:");
+  if (!networkStatus?.exists) console.log("- tc secrets network init");
+  console.log(
+    `- tc secrets put ASSEMBLYAI_API_KEY "$ASSEMBLYAI_API_KEY" --scope ${scope}`,
+  );
+  console.log(`- listen permissions --grant --secret-scope ${scope}`);
+}
+
+function readSecretsNetworkStatus(
+  options: TcOptions,
+): SecretsNetworkStatus | null {
+  try {
+    return secretsNetworkStatus(options);
+  } catch {
+    return null;
+  }
+}
+
+function formatSecretsNetwork(status: SecretsNetworkStatus): string {
+  const parts = [
+    status.name ? `name ${status.name}` : null,
+    status.state ? `state ${status.state}` : null,
+    status.networkId ? shortId(status.networkId) : null,
+  ].filter(Boolean);
+  return parts.join(", ") || "exists";
+}
+
+function shortId(value: string): string {
+  return value.length > 36
+    ? `${value.slice(0, 28)}...${value.slice(-8)}`
+    : value;
+}
+
+function firstLine(value: string): string {
+  return (
+    value
+      .split("\n")
+      .find((line) => line.trim().length > 0)
+      ?.trim() ?? ""
+  );
+}
+
+function summarizeAuthStatus(value: string): string {
+  try {
+    const parsed = JSON.parse(value) as {
+      profile?: string;
+      authenticated?: boolean;
+      host?: string;
+    };
+    const parts = [
+      parsed.profile ? `profile ${parsed.profile}` : null,
+      typeof parsed.authenticated === "boolean"
+        ? `authenticated ${parsed.authenticated ? "yes" : "no"}`
+        : null,
+      parsed.host ?? null,
+    ].filter(Boolean);
+    return parts.join(", ") || "ok";
+  } catch {
+    return firstLine(value);
+  }
+}
+
+function messageFromError(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 function printHelp(): void {
-  console.log(`listen-importer
+  console.log(`${COMMAND}
 
 Usage:
-  listen-importer init
-  listen-importer auth [--profile name] [--host url]
-  listen-importer permissions [--to did] [--expiry 30d]
-  listen-importer scan <path> [--recorder mic-mini|generic] [--dry-run]
-  listen-importer cleanup-recorder <path> [--recorder mic-mini|generic] [--delete] [--confirm volume-name] [--include-untranscribed] [--include-untracked] [--confirm-risky delete-unverified] [--json] [--verbose]
-  listen-importer scan-source voice-memos|voxterm|soundcore-sync [--since yesterday|YYYY-MM-DD] [--path path] [--include-deleted] [--dry-run]
-  listen-importer status [--source recorder|voice_memos|voxterm|soundcore_sync|all] [--json]
-  listen-importer list [--limit n] [--source recorder|voice_memos|voxterm|soundcore_sync|all]
-  listen-importer preprocess [--limit n] [--source recorder|voice_memos|voxterm|soundcore_sync|all] [--format mp3|m4a|wav] [--bitrate 64k] [--sample-rate 16000] [--force]
-  listen-importer downsample [--limit n] [--source recorder|voice_memos|voxterm|soundcore_sync|all] [--format mp3|m4a|wav] [--bitrate 64k] [--sample-rate 16000] [--force]
-  listen-importer transcribe [--limit n] [--source recorder|voice_memos|voxterm|soundcore_sync|all] [--provider deepgram|assemblyai] [--api-key key] [--force]
-  listen-importer upload [--limit n] [--publish] [--use-downsampled] [--transcripts-only] [--source recorder|voice_memos|voxterm|soundcore_sync|all] [--profile name] [--host url]
-  listen-importer doctor
+  listen init
+  listen auth [--profile name] [--host url]
+  listen permissions [--grant] [--expiry 30d] [--secret-scope listen]
+  listen scan <path> [--recorder mic-mini|generic] [--dry-run]
+  listen cleanup-recorder <path> [--recorder mic-mini|generic] [--delete] [--confirm volume-name] [--include-untranscribed] [--include-untracked] [--confirm-risky delete-unverified] [--json] [--verbose]
+  listen scan-source voice-memos|voxterm|soundcore-sync [--since yesterday|YYYY-MM-DD] [--path path] [--include-deleted] [--dry-run]
+  listen status [--source recorder|voice_memos|voxterm|soundcore_sync|all] [--json]
+  listen list [--limit n] [--source recorder|voice_memos|voxterm|soundcore_sync|all]
+  listen downsample [--limit n] [--source recorder|voice_memos|voxterm|soundcore_sync|all] [--format mp3|m4a|wav] [--bitrate 64k] [--sample-rate 16000] [--force]
+  listen transcribe [--limit n] [--source recorder|voice_memos|voxterm|soundcore_sync|all] [--provider assemblyai|deepgram] [--api-key key] [--secret-scope listen] [--force]
+  listen upload [--limit n] [--publish] [--use-downsampled] [--transcripts-only] [--source recorder|voice_memos|voxterm|soundcore_sync|all] [--profile name] [--host url]
+  listen migrate-state [--from path] [--to path] [--dry-run]
+  listen doctor [--secret-scope listen]
+
+Examples:
+  listen scan /Volumes/MIC\\ MINI
+  listen downsample --source recorder
+  listen transcribe --provider assemblyai --source recorder
+  listen upload --publish --use-downsampled --source recorder
 `);
 }
 
@@ -419,6 +648,7 @@ function printCleanupRecorderResult(
 }
 
 main().catch((err) => {
-  console.error(err instanceof Error ? err.message : String(err));
+  console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
+  console.error(`Run '${COMMAND} help' for usage.`);
   process.exit(1);
 });

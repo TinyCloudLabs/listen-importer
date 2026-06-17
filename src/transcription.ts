@@ -1,9 +1,11 @@
 import { mkdir, writeFile } from "node:fs/promises";
+import { openAsBlob } from "node:fs";
 import { join } from "node:path";
 import type { AppConfig } from "./config";
 import type { ImporterStore, RecordingRow } from "./db";
 import { audioSourceFor } from "./downsample";
 import type { ListenSource } from "./listen-source";
+import { getSecret, type TcOptions } from "./tc";
 
 export type TranscriptionProvider = "deepgram" | "assemblyai";
 
@@ -33,6 +35,8 @@ export interface TranscribeOptions {
   pollIntervalMs?: number;
   timeoutMs?: number;
   listenSource?: ListenSource;
+  secretScope?: string;
+  tcOptions?: TcOptions;
 }
 
 export interface TranscribeResult {
@@ -73,7 +77,7 @@ export async function transcribePending(
   const result: TranscribeResult = { transcribed: 0, failed: 0 };
   if (rows.length === 0) return result;
 
-  const { provider, apiKey } = resolveProvider(options);
+  const { provider, apiKey } = resolveProvider(config, options);
 
   for (const row of rows) {
     try {
@@ -229,6 +233,7 @@ async function transcribeWithDeepgram(
   });
   if (options.language) params.set("language", options.language);
   const audio = audioSourceFor(row, true);
+  const audioBlob = await openAsBlob(audio.path, { type: audio.contentType });
 
   const response = await fetch(
     `https://api.deepgram.com/v1/listen?${params.toString()}`,
@@ -238,7 +243,7 @@ async function transcribeWithDeepgram(
         Authorization: `Token ${apiKey}`,
         "Content-Type": audio.contentType,
       },
-      body: Bun.file(audio.path),
+      body: audioBlob,
     },
   );
 
@@ -257,13 +262,16 @@ async function transcribeWithAssemblyAI(
   options: TranscribeOptions,
 ): Promise<NormalizedTranscript> {
   const audio = audioSourceFor(row, true);
+  const audioBlob = await openAsBlob(audio.path, {
+    type: "application/octet-stream",
+  });
   const upload = await fetch("https://api.assemblyai.com/v2/upload", {
     method: "POST",
     headers: {
       authorization: apiKey,
       "Content-Type": "application/octet-stream",
     },
-    body: Bun.file(audio.path),
+    body: audioBlob,
   });
 
   if (!upload.ok) {
@@ -347,37 +355,75 @@ async function saveTranscript(
   return path;
 }
 
-function resolveProvider(options: TranscribeOptions): {
+function resolveProvider(
+  config: AppConfig,
+  options: TranscribeOptions,
+): {
   provider: TranscriptionProvider;
   apiKey: string;
 } {
-  const provider =
-    options.provider ??
-    (process.env.DEEPGRAM_API_KEY
-      ? "deepgram"
-      : process.env.ASSEMBLYAI_API_KEY || process.env.ASSEMBLY_API_KEY
-        ? "assemblyai"
-        : undefined);
-
-  if (provider !== "deepgram" && provider !== "assemblyai") {
-    throw new Error(
-      "Set --provider deepgram|assemblyai or configure a provider API key env var",
-    );
+  if (options.provider) {
+    return {
+      provider: options.provider,
+      apiKey: apiKeyForProvider(config, options.provider, options),
+    };
   }
 
+  if (options.apiKey) return { provider: "assemblyai", apiKey: options.apiKey };
+
+  const assemblyKey = apiKeyForProvider(config, "assemblyai", options, false);
+  if (assemblyKey) return { provider: "assemblyai", apiKey: assemblyKey };
+
+  const deepgramKey = apiKeyForProvider(config, "deepgram", options, false);
+  if (deepgramKey) return { provider: "deepgram", apiKey: deepgramKey };
+
+  throw new Error(
+    `Missing ASSEMBLYAI_API_KEY. Store it with \`tc secrets put ASSEMBLYAI_API_KEY --scope ${options.secretScope ?? config.listenSecretScope}\`, set ASSEMBLYAI_API_KEY, or pass --api-key.`,
+  );
+}
+
+function apiKeyForProvider(
+  config: AppConfig,
+  provider: TranscriptionProvider,
+  options: TranscribeOptions,
+  required = true,
+): string {
   const apiKey =
     options.apiKey ??
-    (provider === "deepgram"
-      ? process.env.DEEPGRAM_API_KEY
-      : process.env.ASSEMBLYAI_API_KEY || process.env.ASSEMBLY_API_KEY);
-
+    envApiKey(provider) ??
+    secretApiKey(config, provider, options, required);
   if (!apiKey) {
     const envName =
       provider === "deepgram" ? "DEEPGRAM_API_KEY" : "ASSEMBLYAI_API_KEY";
+    if (!required) return "";
     throw new Error(`Missing ${envName} or --api-key`);
   }
+  return apiKey;
+}
 
-  return { provider, apiKey };
+function envApiKey(provider: TranscriptionProvider): string | undefined {
+  return provider === "deepgram"
+    ? process.env.DEEPGRAM_API_KEY
+    : process.env.ASSEMBLYAI_API_KEY || process.env.ASSEMBLY_API_KEY;
+}
+
+function secretApiKey(
+  config: AppConfig,
+  provider: TranscriptionProvider,
+  options: TranscribeOptions,
+  required: boolean,
+): string | undefined {
+  const name =
+    provider === "deepgram" ? "DEEPGRAM_API_KEY" : "ASSEMBLYAI_API_KEY";
+  try {
+    return getSecret(name, {
+      ...options.tcOptions,
+      scope: options.secretScope ?? config.listenSecretScope,
+    });
+  } catch (err) {
+    if (!required) return undefined;
+    throw err;
+  }
 }
 
 function millisToSeconds(value: number | undefined): number | null {
