@@ -40,7 +40,7 @@
   },
   "packageManager": "npm@10.8.2",
   "dependencies": {
-    "better-sqlite3": "^12.11.1",
-    "@tinycloud/cli": "0.6.0"
+    "@tinycloud/cli": "0.7.0-beta.5",
+    "better-sqlite3": "^12.11.1"
   }
 }

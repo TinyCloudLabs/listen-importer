@@ -25,6 +25,24 @@ export interface SecretsNetworkStatus {
   name: string | null;
 }
 
+export interface SecretsDoctorStatus {
+  healthy: boolean;
+  network: SecretsNetworkStatus;
+  secret: {
+    name: string;
+    path: string;
+    scope: string | null;
+    exists: boolean;
+    readable: boolean;
+  } | null;
+  checks: Array<{
+    name: string;
+    ok: boolean | "warn";
+    detail: string | null;
+    hint: string | null;
+  }>;
+}
+
 export function runTc(args: string[], options: TcOptions = {}): TcRunResult {
   const tc = tcExecutable();
   const fullArgs = [
@@ -168,6 +186,71 @@ export function secretsNetworkStatus(
     exists: parsed.exists === true,
     state: parsed.descriptor?.state ?? null,
     name: parsed.descriptor?.name ?? null,
+  };
+}
+
+export function secretsDoctorStatus(
+  name: string,
+  options: TcSecretOptions = {},
+): SecretsDoctorStatus {
+  const result = runTc(
+    [
+      "secrets",
+      "doctor",
+      name,
+      ...(options.scope ? ["--scope", options.scope] : []),
+    ],
+    options,
+  );
+  return parseSecretsDoctorStatus(result.stdout);
+}
+
+export function parseSecretsDoctorStatus(stdout: string): SecretsDoctorStatus {
+  const parsed = JSON.parse(stdout) as {
+    healthy?: boolean;
+    network?: {
+      name?: string;
+      networkId?: string;
+      exists?: boolean;
+      state?: string;
+    };
+    secret?: {
+      name?: string;
+      path?: string;
+      scope?: string;
+      exists?: boolean;
+      readable?: boolean;
+    };
+    checks?: Array<{
+      name?: string;
+      ok?: boolean | "warn";
+      detail?: string;
+      hint?: string;
+    }>;
+  };
+  return {
+    healthy: parsed.healthy === true,
+    network: {
+      networkId: parsed.network?.networkId ?? null,
+      exists: parsed.network?.exists === true,
+      state: parsed.network?.state ?? null,
+      name: parsed.network?.name ?? null,
+    },
+    secret: parsed.secret
+      ? {
+          name: parsed.secret.name ?? "",
+          path: parsed.secret.path ?? "",
+          scope: parsed.secret.scope ?? null,
+          exists: parsed.secret.exists === true,
+          readable: parsed.secret.readable === true,
+        }
+      : null,
+    checks: (parsed.checks ?? []).map((check) => ({
+      name: check.name ?? "",
+      ok: check.ok === true ? true : check.ok === "warn" ? "warn" : false,
+      detail: check.detail ?? null,
+      hint: check.hint ?? null,
+    })),
   };
 }
 

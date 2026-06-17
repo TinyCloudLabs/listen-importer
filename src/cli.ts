@@ -28,10 +28,11 @@ import {
 import {
   authStatus,
   createDelegation,
-  ensureSecretsNetwork,
   getSecret,
   requestCapabilities,
+  secretsDoctorStatus,
   secretsNetworkStatus,
+  type SecretsDoctorStatus,
   type SecretsNetworkStatus,
   type TcOptions,
 } from "./tc";
@@ -88,19 +89,24 @@ async function main(): Promise<void> {
           }),
         );
         if (includeSecrets) {
-          if (!networkStatus?.exists) ensureSecretsNetwork(tcOptions(args));
-          const secret = getSecret("ASSEMBLYAI_API_KEY", {
-            ...tcOptions(args),
-            scope: secretScope,
-          });
-          if (secret) {
+          const doctorStatus = readSecretsDoctorStatus(
+            secretScope,
+            tcOptions(args),
+          );
+          if (doctorStatus?.secret?.readable) {
             console.log(
               `Granted access to ASSEMBLYAI_API_KEY in TinyCloud secrets scope ${secretScope}`,
             );
+          } else if (doctorStatus) {
+            console.log(
+              `ASSEMBLYAI_API_KEY is not ready: ${doctorMessage(doctorStatus)}`,
+            );
+            printSecretSetup(secretScope, doctorStatus.network);
           } else {
             console.log(
-              `ASSEMBLYAI_API_KEY is not stored yet. Store it with: ${secretCommand}`,
+              `Could not verify ASSEMBLYAI_API_KEY. Store it with: ${secretCommand}`,
             );
+            printSecretSetup(secretScope, networkStatus);
           }
         }
         break;
@@ -354,7 +360,12 @@ async function main(): Promise<void> {
 
       console.log("");
       console.log("Secrets");
-      const networkStatus = readSecretsNetworkStatus(tcOptions(args));
+      const doctorStatus = readSecretsDoctorStatus(
+        secretScope,
+        tcOptions(args),
+      );
+      const networkStatus =
+        doctorStatus?.network ?? readSecretsNetworkStatus(tcOptions(args));
       if (networkStatus?.exists) {
         printDoctorCheck(
           "Encryption network",
@@ -371,12 +382,8 @@ async function main(): Promise<void> {
         );
       }
 
-      try {
-        const secret = getSecret("ASSEMBLYAI_API_KEY", {
-          ...tcOptions(args),
-          scope: secretScope,
-        });
-        if (secret) {
+      if (doctorStatus) {
+        if (doctorStatus.secret?.readable) {
           printDoctorCheck(
             "AssemblyAI TinyCloud secret",
             "ok",
@@ -386,17 +393,40 @@ async function main(): Promise<void> {
           printDoctorCheck(
             "AssemblyAI TinyCloud secret",
             "warn",
-            `missing in scope ${secretScope}`,
+            doctorStatus.secret?.exists === false
+              ? `missing in scope ${secretScope}`
+              : doctorMessage(doctorStatus),
           );
           printSecretSetup(secretScope, networkStatus);
         }
-      } catch (err) {
-        printDoctorCheck(
-          "AssemblyAI TinyCloud secret",
-          "warn",
-          messageFromError(err),
-        );
-        printSecretSetup(secretScope, networkStatus);
+      } else {
+        try {
+          const secret = getSecret("ASSEMBLYAI_API_KEY", {
+            ...tcOptions(args),
+            scope: secretScope,
+          });
+          if (secret) {
+            printDoctorCheck(
+              "AssemblyAI TinyCloud secret",
+              "ok",
+              `ASSEMBLYAI_API_KEY in scope ${secretScope}`,
+            );
+          } else {
+            printDoctorCheck(
+              "AssemblyAI TinyCloud secret",
+              "warn",
+              `missing in scope ${secretScope}`,
+            );
+            printSecretSetup(secretScope, networkStatus);
+          }
+        } catch (err) {
+          printDoctorCheck(
+            "AssemblyAI TinyCloud secret",
+            "warn",
+            messageFromError(err),
+          );
+          printSecretSetup(secretScope, networkStatus);
+        }
       }
       break;
     }
@@ -532,6 +562,27 @@ function readSecretsNetworkStatus(
   } catch {
     return null;
   }
+}
+
+function readSecretsDoctorStatus(
+  scope: string,
+  options: TcOptions,
+): SecretsDoctorStatus | null {
+  try {
+    return secretsDoctorStatus("ASSEMBLYAI_API_KEY", {
+      ...options,
+      scope,
+    });
+  } catch {
+    return null;
+  }
+}
+
+function doctorMessage(status: SecretsDoctorStatus): string {
+  return (
+    status.checks.find((check) => check.name === "Secret access")?.detail ??
+    "not readable"
+  );
 }
 
 function formatSecretsNetwork(status: SecretsNetworkStatus): string {

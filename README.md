@@ -59,9 +59,10 @@ configurable scoped paths (defaults: `importer/media`, `importer/metadata`,
 `LISTEN_METADATA_KV_PATH`, `LISTEN_TRANSCRIPT_KV_PATH`. The canonical app id is
 `LISTEN_APP_ID` (default `xyz.tinycloud.listen`); SQL db and KV prefix derive
 from it unless explicitly overridden. Override the app space with
-`LISTEN_APP_SPACE`; publishing requires a `tc` CLI with `kv --space` support.
-This package pins `@tinycloud/cli@0.6.0` and prefers that local binary when
-available; override with `LISTEN_TC_PATH`.
+`LISTEN_APP_SPACE`; publishing requires a `tc` CLI with `kv --space` and
+`tc secrets doctor` support. This package pins the current
+`@tinycloud/cli@0.7.0-beta.5` beta and prefers that local binary when available;
+override with `LISTEN_TC_PATH`.
 
 ## Usage
 
@@ -83,7 +84,9 @@ Transcription prefers AssemblyAI, then falls back to Deepgram. Store API keys in
 TinyCloud secrets:
 
 ```sh
-tc secrets network init
+tc secrets doctor ASSEMBLYAI_API_KEY --scope listen
+# If the doctor reports a missing network:
+# tc secrets network init
 tc secrets put ASSEMBLYAI_API_KEY "$ASSEMBLYAI_API_KEY" --scope listen
 listen permissions --grant
 listen transcribe --source recorder
@@ -159,14 +162,15 @@ listen doctor [--secret-scope listen]
 ```
 
 `permissions --grant` shells out to `tc auth request --grant` for Listen KV/SQL
-capabilities and initializes the TinyCloud secrets permission path for
-`ASSEMBLYAI_API_KEY`. SQL writes and direct uploads use your authenticated `tc`
-profile.
+capabilities and runs `tc secrets doctor ASSEMBLYAI_API_KEY --scope listen` to
+verify the TinyCloud secrets permission path for `ASSEMBLYAI_API_KEY`. SQL
+writes and direct uploads use your authenticated `tc` profile.
 
 `doctor` checks local state, TinyCloud auth, environment transcription keys, the
 default TinyCloud secrets encryption network, and whether `ASSEMBLYAI_API_KEY`
-is readable from the configured TinyCloud secrets scope. It only suggests
-`tc secrets network init` when the network is missing or unreadable.
+is readable from the configured TinyCloud secrets scope. It uses
+`tc secrets doctor` and only suggests `tc secrets network init` when the network
+is missing or unreadable.
 
 ## Development
 
