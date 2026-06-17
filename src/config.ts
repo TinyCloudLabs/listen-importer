@@ -5,7 +5,7 @@ export const DEFAULT_LISTEN_APP_ID = "xyz.tinycloud.listen";
 export const DEFAULT_LISTEN_SQL_DB = `${DEFAULT_LISTEN_APP_ID}/conversations`;
 export const DEFAULT_LISTEN_KV_PREFIX = DEFAULT_LISTEN_APP_ID;
 export const DEFAULT_LISTEN_APP_SPACE = "applications";
-export const DEFAULT_LISTEN_SECRET_SCOPE = "listen";
+export const DEFAULT_LISTEN_SECRET_SCOPE = "";
 
 export interface AppConfig {
   homeDir: string;

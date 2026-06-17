@@ -75,7 +75,7 @@ async function main(): Promise<void> {
       const secretScope =
         stringFlag(args, "secret-scope") ?? config.listenSecretScope;
       const includeSecrets = !Boolean(args.flags["no-secrets"]);
-      const secretCommand = `tc secrets put ASSEMBLYAI_API_KEY "$ASSEMBLYAI_API_KEY" --scope ${secretScope}`;
+      const secretCommand = secretPutCommand(secretScope);
       const networkStatus = includeSecrets
         ? readSecretsNetworkStatus(tcOptions(args))
         : null;
@@ -95,7 +95,7 @@ async function main(): Promise<void> {
           );
           if (doctorStatus?.secret?.readable) {
             console.log(
-              `Granted access to ASSEMBLYAI_API_KEY in TinyCloud secrets scope ${secretScope}`,
+              `Granted access to ASSEMBLYAI_API_KEY in ${secretScopeLabel(secretScope)}`,
             );
           } else if (doctorStatus) {
             console.log(
@@ -116,7 +116,7 @@ async function main(): Promise<void> {
         for (const capability of capabilities) console.log(`- ${capability}`);
         if (includeSecrets) {
           console.log(
-            `- ASSEMBLYAI_API_KEY from tc secrets scope ${secretScope}`,
+            `- ASSEMBLYAI_API_KEY from ${secretScopeLabel(secretScope)}`,
           );
           console.log("");
           printSecretSetup(secretScope, networkStatus);
@@ -336,7 +336,7 @@ async function main(): Promise<void> {
       console.log(`  SQL DB: ${config.listenSqlDb}`);
       console.log(`  KV prefix: ${config.listenKvPrefix}`);
       console.log(`  App space: ${config.listenAppSpace}`);
-      console.log(`  Secret scope: ${secretScope}`);
+      console.log(`  Secret scope: ${secretScope || "global"}`);
       console.log("");
       console.log("TinyCloud");
       try {
@@ -387,14 +387,14 @@ async function main(): Promise<void> {
           printDoctorCheck(
             "AssemblyAI TinyCloud secret",
             "ok",
-            `ASSEMBLYAI_API_KEY in scope ${secretScope}`,
+            `ASSEMBLYAI_API_KEY in ${secretScopeLabel(secretScope)}`,
           );
         } else {
           printDoctorCheck(
             "AssemblyAI TinyCloud secret",
             "warn",
             doctorStatus.secret?.exists === false
-              ? `missing in scope ${secretScope}`
+              ? `missing in ${secretScopeLabel(secretScope)}`
               : doctorMessage(doctorStatus),
           );
           printSecretSetup(secretScope, networkStatus);
@@ -409,13 +409,13 @@ async function main(): Promise<void> {
             printDoctorCheck(
               "AssemblyAI TinyCloud secret",
               "ok",
-              `ASSEMBLYAI_API_KEY in scope ${secretScope}`,
+              `ASSEMBLYAI_API_KEY in ${secretScopeLabel(secretScope)}`,
             );
           } else {
             printDoctorCheck(
               "AssemblyAI TinyCloud secret",
               "warn",
-              `missing in scope ${secretScope}`,
+              `missing in ${secretScopeLabel(secretScope)}`,
             );
             printSecretSetup(secretScope, networkStatus);
           }
@@ -548,10 +548,8 @@ function printSecretSetup(
 ): void {
   console.log("Secret setup:");
   if (!networkStatus?.exists) console.log("- tc secrets network init");
-  console.log(
-    `- tc secrets put ASSEMBLYAI_API_KEY "$ASSEMBLYAI_API_KEY" --scope ${scope}`,
-  );
-  console.log(`- listen permissions --grant --secret-scope ${scope}`);
+  console.log(`- ${secretPutCommand(scope)}`);
+  console.log(`- ${permissionsGrantCommand(scope)}`);
 }
 
 function readSecretsNetworkStatus(
@@ -583,6 +581,30 @@ function doctorMessage(status: SecretsDoctorStatus): string {
     status.checks.find((check) => check.name === "Secret access")?.detail ??
     "not readable"
   );
+}
+
+function secretScopeLabel(scope: string): string {
+  return scope ? `tc secrets scope ${scope}` : "global tc secrets";
+}
+
+function secretPutCommand(scope: string): string {
+  return [
+    "tc",
+    "secrets",
+    "put",
+    "ASSEMBLYAI_API_KEY",
+    '"$ASSEMBLYAI_API_KEY"',
+    ...(scope ? ["--scope", scope] : []),
+  ].join(" ");
+}
+
+function permissionsGrantCommand(scope: string): string {
+  return [
+    "listen",
+    "permissions",
+    "--grant",
+    ...(scope ? ["--secret-scope", scope] : []),
+  ].join(" ");
 }
 
 function formatSecretsNetwork(status: SecretsNetworkStatus): string {
@@ -639,17 +661,17 @@ function printHelp(): void {
 Usage:
   listen init
   listen auth [--profile name] [--host url]
-  listen permissions [--grant] [--expiry 30d] [--secret-scope listen]
+  listen permissions [--grant] [--expiry 30d] [--secret-scope name]
   listen scan <path> [--recorder mic-mini|generic] [--dry-run]
   listen cleanup-recorder <path> [--recorder mic-mini|generic] [--delete] [--confirm volume-name] [--include-untranscribed] [--include-untracked] [--confirm-risky delete-unverified] [--json] [--verbose]
   listen scan-source voice-memos|voxterm|soundcore-sync [--since yesterday|YYYY-MM-DD] [--path path] [--include-deleted] [--dry-run]
   listen status [--source recorder|voice_memos|voxterm|soundcore_sync|all] [--json]
   listen list [--limit n] [--source recorder|voice_memos|voxterm|soundcore_sync|all]
   listen downsample [--limit n] [--source recorder|voice_memos|voxterm|soundcore_sync|all] [--format mp3|m4a|wav] [--bitrate 64k] [--sample-rate 16000] [--force]
-  listen transcribe [--limit n] [--source recorder|voice_memos|voxterm|soundcore_sync|all] [--provider assemblyai|deepgram] [--api-key key] [--secret-scope listen] [--force]
+  listen transcribe [--limit n] [--source recorder|voice_memos|voxterm|soundcore_sync|all] [--provider assemblyai|deepgram] [--api-key key] [--secret-scope name] [--force]
   listen upload [--limit n] [--publish] [--use-downsampled] [--transcripts-only] [--source recorder|voice_memos|voxterm|soundcore_sync|all] [--profile name] [--host url]
   listen migrate-state [--from path] [--to path] [--dry-run]
-  listen doctor [--secret-scope listen]
+  listen doctor [--secret-scope name]
 
 Examples:
   listen scan /Volumes/MIC\\ MINI

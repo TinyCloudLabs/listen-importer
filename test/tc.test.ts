@@ -14,8 +14,7 @@ describe("TinyCloud CLI helpers", () => {
         },
         secret: {
           name: "ASSEMBLYAI_API_KEY",
-          path: "vault/secrets/scoped/listen/ASSEMBLYAI_API_KEY",
-          scope: "listen",
+          path: "vault/secrets/ASSEMBLYAI_API_KEY",
           exists: true,
           readable: true,
         },
@@ -23,7 +22,7 @@ describe("TinyCloud CLI helpers", () => {
           {
             name: "Secret access",
             ok: true,
-            detail: "vault/secrets/scoped/listen/ASSEMBLYAI_API_KEY readable",
+            detail: "vault/secrets/ASSEMBLYAI_API_KEY readable",
           },
         ],
       }),
@@ -39,8 +38,8 @@ describe("TinyCloud CLI helpers", () => {
       },
       secret: {
         name: "ASSEMBLYAI_API_KEY",
-        path: "vault/secrets/scoped/listen/ASSEMBLYAI_API_KEY",
-        scope: "listen",
+        path: "vault/secrets/ASSEMBLYAI_API_KEY",
+        scope: null,
         exists: true,
         readable: true,
       },
@@ -48,7 +47,7 @@ describe("TinyCloud CLI helpers", () => {
         {
           name: "Secret access",
           ok: true,
-          detail: "vault/secrets/scoped/listen/ASSEMBLYAI_API_KEY readable",
+          detail: "vault/secrets/ASSEMBLYAI_API_KEY readable",
           hint: null,
         },
       ],

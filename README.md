@@ -84,16 +84,18 @@ Transcription prefers AssemblyAI, then falls back to Deepgram. Store API keys in
 TinyCloud secrets:
 
 ```sh
-tc secrets doctor ASSEMBLYAI_API_KEY --scope listen
+tc secrets doctor ASSEMBLYAI_API_KEY
 # If the doctor reports a missing network:
 # tc secrets network init
-tc secrets put ASSEMBLYAI_API_KEY "$ASSEMBLYAI_API_KEY" --scope listen
+tc secrets put ASSEMBLYAI_API_KEY "$ASSEMBLYAI_API_KEY"
 listen permissions --grant
 listen transcribe --source recorder
 ```
 
 `--api-key`, `ASSEMBLYAI_API_KEY`, and `DEEPGRAM_API_KEY` still work for local
-overrides. Use `--provider deepgram` to force Deepgram.
+overrides. Use `--provider deepgram` to force Deepgram. Pass
+`--secret-scope <name>` if you intentionally store transcription keys in a
+scoped TinyCloud secret namespace.
 
 `upload --publish` makes recordings visible in Listen as `source = recorder`. When a transcript exists locally, it is written into the `transcript_json` and `transcript_text` columns of the conversation row.
 
@@ -148,23 +150,23 @@ Voice Memos reads the macOS Voice Memos library directly and publishes as `sourc
 ```text
 listen init
 listen auth [--profile name] [--host url]
-listen permissions [--grant] [--expiry 30d] [--secret-scope listen]
+listen permissions [--grant] [--expiry 30d] [--secret-scope name]
 listen scan <path> [--recorder mic-mini|generic] [--dry-run]
 listen cleanup-recorder <path> [--recorder mic-mini|generic] [--delete] [--confirm volume-name] [--include-untranscribed] [--include-untracked] [--confirm-risky delete-unverified] [--json] [--verbose]
 listen scan-source voice-memos|voxterm|soundcore-sync [--since yesterday|YYYY-MM-DD] [--path path] [--include-deleted] [--dry-run]
 listen status [--source recorder|voice_memos|voxterm|soundcore_sync|all] [--json]
 listen list [--limit n] [--source recorder|voice_memos|voxterm|soundcore_sync|all]
 listen downsample [--limit n] [--source recorder|voice_memos|voxterm|soundcore_sync|all] [--format mp3|m4a|wav] [--bitrate 64k] [--sample-rate 16000] [--force]
-listen transcribe [--limit n] [--source recorder|voice_memos|voxterm|soundcore_sync|all] [--provider assemblyai|deepgram] [--api-key key] [--secret-scope listen] [--force]
+listen transcribe [--limit n] [--source recorder|voice_memos|voxterm|soundcore_sync|all] [--provider assemblyai|deepgram] [--api-key key] [--secret-scope name] [--force]
 listen upload [--limit n] [--publish] [--use-downsampled] [--transcripts-only] [--source recorder|voice_memos|voxterm|soundcore_sync|all] [--profile name] [--host url]
 listen migrate-state [--from path] [--to path] [--dry-run]
-listen doctor [--secret-scope listen]
+listen doctor [--secret-scope name]
 ```
 
 `permissions --grant` shells out to `tc auth request --grant` for Listen KV/SQL
-capabilities and runs `tc secrets doctor ASSEMBLYAI_API_KEY --scope listen` to
-verify the TinyCloud secrets permission path for `ASSEMBLYAI_API_KEY`. SQL
-writes and direct uploads use your authenticated `tc` profile.
+capabilities and runs `tc secrets doctor ASSEMBLYAI_API_KEY` to verify the
+TinyCloud secrets permission path for `ASSEMBLYAI_API_KEY`. SQL writes and
+direct uploads use your authenticated `tc` profile.
 
 `doctor` checks local state, TinyCloud auth, environment transcription keys, the
 default TinyCloud secrets encryption network, and whether `ASSEMBLYAI_API_KEY`

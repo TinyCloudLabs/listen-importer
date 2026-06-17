@@ -378,7 +378,7 @@ function resolveProvider(
   if (deepgramKey) return { provider: "deepgram", apiKey: deepgramKey };
 
   throw new Error(
-    `Missing ASSEMBLYAI_API_KEY. Store it with \`tc secrets put ASSEMBLYAI_API_KEY --scope ${options.secretScope ?? config.listenSecretScope}\`, set ASSEMBLYAI_API_KEY, or pass --api-key.`,
+    `Missing ASSEMBLYAI_API_KEY. Store it with \`${secretPutCommand(options.secretScope ?? config.listenSecretScope)}\`, set ASSEMBLYAI_API_KEY, or pass --api-key.`,
   );
 }
 
@@ -424,6 +424,16 @@ function secretApiKey(
     if (!required) return undefined;
     throw err;
   }
+}
+
+function secretPutCommand(scope: string): string {
+  return [
+    "tc",
+    "secrets",
+    "put",
+    "ASSEMBLYAI_API_KEY",
+    ...(scope ? ["--scope", scope] : []),
+  ].join(" ");
 }
 
 function millisToSeconds(value: number | undefined): number | null {
