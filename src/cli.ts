@@ -341,13 +341,13 @@ Usage:
   listen-importer auth [--profile name] [--host url]
   listen-importer permissions [--to did] [--expiry 30d]
   listen-importer scan <path> [--recorder mic-mini|generic] [--dry-run]
-  listen-importer scan-source voice-memos|voxterm [--since yesterday|YYYY-MM-DD] [--path path] [--include-deleted] [--dry-run]
-  listen-importer status [--source recorder|voice_memos|voxterm|all] [--json]
-  listen-importer list [--limit n] [--source recorder|voice_memos|voxterm|all]
-  listen-importer preprocess [--limit n] [--source recorder|voice_memos|voxterm|all] [--format mp3|m4a|wav] [--bitrate 64k] [--sample-rate 16000] [--force]
-  listen-importer downsample [--limit n] [--source recorder|voice_memos|voxterm|all] [--format mp3|m4a|wav] [--bitrate 64k] [--sample-rate 16000] [--force]
-  listen-importer transcribe [--limit n] [--source recorder|voice_memos|voxterm|all] [--provider deepgram|assemblyai] [--api-key key] [--force]
-  listen-importer upload [--limit n] [--publish] [--use-downsampled] [--transcripts-only] [--source recorder|voice_memos|voxterm|all] [--profile name] [--host url]
+  listen-importer scan-source voice-memos|voxterm|soundcore-sync [--since yesterday|YYYY-MM-DD] [--path path] [--include-deleted] [--dry-run]
+  listen-importer status [--source recorder|voice_memos|voxterm|soundcore_sync|all] [--json]
+  listen-importer list [--limit n] [--source recorder|voice_memos|voxterm|soundcore_sync|all]
+  listen-importer preprocess [--limit n] [--source recorder|voice_memos|voxterm|soundcore_sync|all] [--format mp3|m4a|wav] [--bitrate 64k] [--sample-rate 16000] [--force]
+  listen-importer downsample [--limit n] [--source recorder|voice_memos|voxterm|soundcore_sync|all] [--format mp3|m4a|wav] [--bitrate 64k] [--sample-rate 16000] [--force]
+  listen-importer transcribe [--limit n] [--source recorder|voice_memos|voxterm|soundcore_sync|all] [--provider deepgram|assemblyai] [--api-key key] [--force]
+  listen-importer upload [--limit n] [--publish] [--use-downsampled] [--transcripts-only] [--source recorder|voice_memos|voxterm|soundcore_sync|all] [--profile name] [--host url]
   listen-importer doctor
 `);
 }

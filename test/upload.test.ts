@@ -113,4 +113,94 @@ describe("upload", () => {
       expect(args.slice(-2)).toEqual(["--space", "applications"]);
     }
   });
+
+  test("publishes Soundcore Sync conversations with a dedicated source and id prefix", async () => {
+    tempDir = await mkdtemp(join(tmpdir(), "listen-importer-upload-"));
+    const transcriptPath = join(tempDir, "soundcore-transcript.json");
+    await writeFile(
+      transcriptPath,
+      JSON.stringify([
+        {
+          speaker_name: "Ada",
+          text: "Soundcore line",
+          start_time: null,
+          end_time: null,
+        },
+      ]),
+    );
+
+    const config = {
+      homeDir: tempDir,
+      dbPath: join(tempDir, "state.sqlite"),
+      mediaDir: join(tempDir, "media"),
+      downsampledDir: join(tempDir, "downsampled"),
+      transcriptsDir: join(tempDir, "transcripts"),
+      listenSqlDb: "test-prefix/conversations",
+      listenKvPrefix: "test-prefix",
+      listenAppSpace: "applications",
+    };
+    const store = await openStore(config);
+    const sha256 =
+      "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
+
+    store.upsertRecording({
+      id: sha256,
+      sha256,
+      sourcePath: "/Soundcore/2026-06-08-planning.md",
+      localPath: join(tempDir, "media", "sha.md"),
+      fileName: "2026-06-08-planning.md",
+      extension: ".md",
+      contentType: "text/markdown",
+      sourceAdapter: "soundcore-sync",
+      importType: "soundcore-transcript",
+      listenSource: "soundcore_sync",
+      sourceId: "soundcore-sync:2026-06/2026-06-08-planning.md",
+      sourceUri: "/Soundcore/2026-06-08-planning.md",
+      title: "Planning",
+      artifactKind: "transcript",
+      metadataJson: JSON.stringify({ source_app: "Soundcore" }),
+      recorder: "soundcore-sync",
+      sizeBytes: 12,
+      recordedAt: "2026-06-08T00:00:00.000Z",
+      modifiedAt: "2026-06-08T00:00:00.000Z",
+      transcriptPath,
+      transcriptText: "Soundcore line",
+      durationSecs: 60,
+    });
+
+    const result = await uploadPending(config, store, 1, {
+      publish: true,
+      transcriptsOnly: true,
+      listenSource: "soundcore_sync",
+    });
+    store.close();
+
+    expect(result).toEqual({ uploaded: 0, published: 1, failed: 0 });
+
+    const calls = spawnSync.mock.calls as unknown as SpawnCall[];
+    const transcriptCall = calls.find(([, argv]) => {
+      return (
+        argv[0] === "kv" &&
+        argv[1] === "put" &&
+        argv[2] === "test-prefix/transcript/sc-1234567890abcdef12345678"
+      );
+    });
+    expect(transcriptCall).toBeDefined();
+
+    const conversationInsert = calls.find(([, argv]) => {
+      return (
+        argv[0] === "sql" &&
+        argv[1] === "execute" &&
+        argv[2]?.includes("INSERT OR REPLACE INTO conversation")
+      );
+    });
+    expect(conversationInsert).toBeDefined();
+    const paramsIndex = conversationInsert![1].indexOf("--params") + 1;
+    const params = JSON.parse(conversationInsert![1][paramsIndex]!);
+    expect(params[0]).toBe("sc-1234567890abcdef12345678");
+    expect(params[2]).toBe("soundcore_sync");
+    expect(params[3]).toBe(
+      "soundcore-sync:soundcore-sync:2026-06/2026-06-08-planning.md",
+    );
+  });
 });

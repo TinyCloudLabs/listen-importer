@@ -125,6 +125,24 @@ describe("ImporterStore", () => {
       sourceId: "voice-1",
       recorder: "voice-memos",
     });
+    store.upsertRecording({
+      ...base,
+      id: "soundcore-sha",
+      sha256: "soundcore-sha",
+      sourcePath: "/Soundcore/2026-06-08-planning.md",
+      localPath: join(tempDir, "media", "soundcore-sha.md"),
+      fileName: "2026-06-08-planning.md",
+      extension: ".md",
+      contentType: "text/markdown",
+      sourceAdapter: "soundcore-sync",
+      importType: "soundcore-transcript",
+      listenSource: "soundcore_sync",
+      sourceId: "soundcore-sync:2026-06-08-planning.md",
+      artifactKind: "transcript",
+      transcriptPath: join(tempDir, "transcripts", "soundcore-sha.json"),
+      transcriptText: "Hello from Soundcore",
+      recorder: "soundcore-sync",
+    });
 
     expect(store.pendingUpload(10, false, "voice_memos")).toHaveLength(1);
     expect(store.pendingUpload(10, false, "voice_memos")[0]!.file_name).toBe(
@@ -142,7 +160,16 @@ describe("ImporterStore", () => {
       store.pendingTranscription(10, false, "voice_memos")[0]!.file_name,
     ).toBe("B.m4a");
     expect(store.list(10, "voice_memos")).toHaveLength(1);
+    expect(store.list(10, "soundcore_sync")).toHaveLength(1);
+    expect(store.pendingDownsample(10, false, "soundcore_sync")).toHaveLength(
+      0,
+    );
+    expect(
+      store.pendingTranscription(10, false, "soundcore_sync"),
+    ).toHaveLength(0);
+    expect(store.pendingUpload(10, false, "soundcore_sync")).toHaveLength(1);
     expect(store.counts("voice_memos").total).toBe(1);
+    expect(store.counts("soundcore_sync").total).toBe(1);
     expect(store.counts("recorder").total).toBe(1);
     store.close();
   });

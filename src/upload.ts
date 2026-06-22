@@ -376,7 +376,9 @@ function conversationIdFor(row: RecordingRow): string {
       ? "vm"
       : row.listen_source === "voxterm"
         ? "vox"
-        : "rec";
+        : row.listen_source === "soundcore_sync"
+          ? "sc"
+          : "rec";
   return `${prefix}-${row.sha256.slice(0, 24)}`;
 }
 

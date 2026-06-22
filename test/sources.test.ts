@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, test } from "bun:test";
@@ -158,6 +158,100 @@ describe("source scanning", () => {
         end_time: null,
       },
     ]);
+  });
+
+  test("reads Soundcore Sync markdown transcripts as transcript imports", async () => {
+    tempDir = await mkdtemp(join(tmpdir(), "listen-importer-sources-"));
+    const transcriptPath = join(tempDir, "2026-06", "2026-06-08-planning.md");
+    await mkdir(join(tempDir, "2026-06"), { recursive: true });
+    await writeFile(
+      transcriptPath,
+      [
+        "# Synthetic Soundcore Planning Meeting",
+        "**Date:** 2026-06-08",
+        "**Duration:** 23 min",
+        "",
+        "## Summary",
+        "",
+        "**What**: The team weighs charging per widget.",
+        "",
+        "## Transcript",
+        "",
+        "**Ada:**",
+        "We should charge by the widget.",
+        "",
+        "**speaker1:**",
+        "Plan B: we ship the pricing change Friday.",
+        "",
+      ].join("\n"),
+    );
+
+    const files = await scanImportSource("soundcore-sync", {
+      path: tempDir,
+      since: new Date("2026-06-01T00:00:00Z"),
+    });
+
+    expect(files).toHaveLength(1);
+    expect(files[0]!.sourceAdapter).toBe("soundcore-sync");
+    expect(files[0]!.importType).toBe("soundcore-transcript");
+    expect(files[0]!.listenSource).toBe("soundcore_sync");
+    expect(files[0]!.artifactKind).toBe("transcript");
+    expect(files[0]!.title).toBe("Synthetic Soundcore Planning Meeting");
+    expect(files[0]!.durationSecs).toBe(23 * 60);
+    expect(files[0]!.recordedAt).toBe("2026-06-08T00:00:00.000Z");
+    expect(files[0]!.sourceId).toBe(
+      "soundcore-sync:2026-06/2026-06-08-planning.md",
+    );
+    expect(files[0]!.transcriptSegments).toEqual([
+      {
+        speaker_name: "Ada",
+        text: "We should charge by the widget.",
+        start_time: null,
+        end_time: null,
+      },
+      {
+        speaker_name: "speaker1",
+        text: "Plan B: we ship the pricing change Friday.",
+        start_time: null,
+        end_time: null,
+      },
+    ]);
+    expect(JSON.parse(files[0]!.metadataJson!)).toMatchObject({
+      source_app: "Soundcore",
+      has_transcript: true,
+      empty_transcript: false,
+    });
+  });
+
+  test("does not treat empty Soundcore placeholder as spoken text", async () => {
+    tempDir = await mkdtemp(join(tmpdir(), "listen-importer-sources-"));
+    const transcriptPath = join(tempDir, "2026-06-07-empty.md");
+    await writeFile(
+      transcriptPath,
+      [
+        "# 2026-06-07 15:05:32",
+        "**Date:** 2026-06-07",
+        "**Duration:** 0 min",
+        "",
+        "## Transcript",
+        "",
+        "_(No transcript segments available.)_",
+        "",
+      ].join("\n"),
+    );
+
+    const files = await scanImportSource("soundcore-sync", {
+      path: tempDir,
+      since: new Date("2026-06-01T00:00:00Z"),
+    });
+
+    expect(files).toHaveLength(1);
+    expect(files[0]!.transcriptSegments).toEqual([]);
+    expect(files[0]!.transcriptText).toBe("");
+    expect(JSON.parse(files[0]!.metadataJson!)).toMatchObject({
+      has_transcript: false,
+      empty_transcript: true,
+    });
   });
 });
 

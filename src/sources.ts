@@ -10,7 +10,7 @@ import {
   type TranscriptSegment,
 } from "./media";
 
-export type ImportSource = "voice-memos" | "voxterm";
+export type ImportSource = "voice-memos" | "voxterm" | "soundcore-sync";
 
 export interface ScanSourceOptions {
   since: Date;
@@ -40,6 +40,13 @@ interface VoiceMemoMetadata {
 const APPLE_EPOCH_MS = Date.UTC(2001, 0, 1);
 const VOICE_MEMOS_DELETED_FLAG = 1024;
 const VOXTERM_DEFAULT_DIR = join(homedir(), "Documents", "voxterm-transcripts");
+const SOUNDCORE_SYNC_DEFAULT_DIR = join(
+  homedir(),
+  "Documents",
+  "Soundcore-Transcripts",
+);
+const SOUNDCORE_EMPTY_RE = /_\(No transcript segments available\.\)_/;
+const SOUNDCORE_TURN_LABEL_RE = /^\*\*([^*\n]+?)\s*:\s*\*\*\s*$/;
 
 export async function scanImportSource(
   source: ImportSource,
@@ -47,12 +54,21 @@ export async function scanImportSource(
 ): Promise<RecorderFile[]> {
   if (source === "voice-memos") return scanVoiceMemos(options);
   if (source === "voxterm") return scanVoxTerm(options);
+  if (source === "soundcore-sync") return scanSoundcoreSync(options);
   throw new Error(`Unsupported source: ${source}`);
 }
 
 export function parseImportSource(value: string | undefined): ImportSource {
-  if (value === "voice-memos" || value === "voxterm") return value;
-  throw new Error("scan-source requires voice-memos or voxterm");
+  if (
+    value === "voice-memos" ||
+    value === "voxterm" ||
+    value === "soundcore-sync"
+  )
+    return value;
+  if (value === "soundcore_sync") return "soundcore-sync";
+  throw new Error(
+    "scan-source requires voice-memos, voxterm, or soundcore-sync",
+  );
 }
 
 export function parseSince(value: string | undefined, now = new Date()): Date {
@@ -188,6 +204,68 @@ async function scanVoxTerm(
       transcriptText,
       durationSecs: null,
       recorder: "voxterm",
+      sizeBytes: stats.size,
+      recordedAt,
+      modifiedAt: stats.mtime.toISOString(),
+    });
+  }
+
+  return rows.sort(compareRecorded);
+}
+
+async function scanSoundcoreSync(
+  options: ScanSourceOptions,
+): Promise<RecorderFile[]> {
+  const root = resolve(
+    options.path ??
+      process.env.LISTEN_IMPORTER_SOUNDCORE_SYNC_DIR ??
+      SOUNDCORE_SYNC_DEFAULT_DIR,
+  );
+  const files = await listFiles(
+    root,
+    (path) => extname(path).toLowerCase() === ".md",
+  );
+  const rows: RecorderFile[] = [];
+
+  for (const path of files) {
+    if (path.split(/[\\/]/).some((part) => part.startsWith("."))) continue;
+    const stats = await stat(path);
+    const raw = await Bun.file(path).text();
+    const parsed = parseSoundcoreSyncMarkdown(raw, path);
+    const recordedAt =
+      parsed.recordedAt ??
+      recordedAtFromName(basename(path)) ??
+      stats.birthtime?.toISOString() ??
+      null;
+    if (!isOnOrAfter(recordedAt, options.since)) continue;
+    const fileName = basename(path);
+    const relativePath = relative(root, path);
+
+    rows.push({
+      sourcePath: path,
+      fileName,
+      extension: ".md",
+      contentType: "text/markdown",
+      sourceAdapter: "soundcore-sync",
+      importType: "soundcore-transcript",
+      listenSource: "soundcore_sync",
+      sourceId: `soundcore-sync:${relativePath}`,
+      sourceUri: path,
+      title: parsed.title ?? basename(fileName, ".md").replace(/[_-]+/g, " "),
+      artifactKind: "transcript",
+      metadataJson: JSON.stringify({
+        source_app: "Soundcore",
+        source_adapter: "soundcore-sync",
+        transcripts_root: root,
+        source_file: relativePath,
+        summary: parsed.summary,
+        has_transcript: parsed.segments.length > 0,
+        empty_transcript: parsed.empty,
+      }),
+      transcriptSegments: parsed.segments,
+      transcriptText: parsed.segments.map((segment) => segment.text).join("\n"),
+      durationSecs: parsed.durationSecs,
+      recorder: "soundcore-sync",
       sizeBytes: stats.size,
       recordedAt,
       modifiedAt: stats.mtime.toISOString(),
@@ -437,6 +515,127 @@ function parseVoxTermSegments(raw: string): TranscriptSegment[] {
   return text
     ? [{ speaker_name: "Unknown", text, start_time: null, end_time: null }]
     : [];
+}
+
+function parseSoundcoreSyncMarkdown(
+  raw: string,
+  path: string,
+): {
+  title: string | null;
+  recordedAt: string | null;
+  durationSecs: number | null;
+  summary: string | null;
+  segments: TranscriptSegment[];
+  empty: boolean;
+} {
+  const title = raw.match(/^#\s+(.+)$/m)?.[1]?.trim() ?? null;
+  const dateValue = raw.match(/^\*\*Date:\*\*\s*(.+)$/m)?.[1]?.trim() ?? null;
+  const durationValue =
+    raw.match(/^\*\*Duration:\*\*\s*(.+)$/m)?.[1]?.trim() ?? null;
+  const recordedAt = dateValue ? dateOnlyToIso(dateValue) : null;
+  const durationSecs = parseDurationSecs(durationValue);
+  const transcriptMatch = raw.match(/^##\s+Transcript\s*$/m);
+  const transcriptIndex = transcriptMatch?.index ?? -1;
+  const beforeTranscript = transcriptMatch
+    ? raw.slice(0, transcriptIndex)
+    : raw;
+  const summary = soundcoreSummary(beforeTranscript);
+  const transcriptRegion = transcriptMatch
+    ? raw.slice(transcriptIndex + transcriptMatch[0].length)
+    : "";
+  const segments = parseSoundcoreTranscriptRegion(transcriptRegion);
+  const empty =
+    segments.length === 0 &&
+    (SOUNDCORE_EMPTY_RE.test(transcriptRegion) ||
+      transcriptRegion.trim().length === 0);
+
+  if (!title && !dateValue && !transcriptMatch) {
+    return {
+      title: basename(path, extname(path)).replace(/[_-]+/g, " "),
+      recordedAt: null,
+      durationSecs: null,
+      summary: null,
+      segments: [],
+      empty: true,
+    };
+  }
+
+  return { title, recordedAt, durationSecs, summary, segments, empty };
+}
+
+function soundcoreSummary(beforeTranscript: string): string | null {
+  const lines = beforeTranscript
+    .split(/\r?\n/)
+    .filter((line) => !/^#\s+/.test(line))
+    .filter((line) => !/^\*\*(Date|Duration):\*\*/i.test(line));
+  const summary = lines.join("\n").trim();
+  return summary.length > 0 ? summary : null;
+}
+
+function parseSoundcoreTranscriptRegion(region: string): TranscriptSegment[] {
+  const withoutEmptySentinel = region.replace(
+    new RegExp(SOUNDCORE_EMPTY_RE.source, "g"),
+    "",
+  );
+  const turns: Array<{ speaker: string; lines: string[] }> = [];
+
+  for (const line of withoutEmptySentinel.split(/\r?\n/)) {
+    if (/^##\s+Transcript\s*$/.test(line)) continue;
+    const label = SOUNDCORE_TURN_LABEL_RE.exec(line);
+    if (label?.[1] !== undefined) {
+      turns.push({ speaker: label[1].trim() || "Speaker", lines: [] });
+      continue;
+    }
+    if (turns.length > 0) turns[turns.length - 1]!.lines.push(line);
+  }
+
+  return turns
+    .map<TranscriptSegment | null>((turn) => {
+      const text = turn.lines.join("\n").trim();
+      if (!text) return null;
+      return {
+        speaker_name: turn.speaker,
+        text,
+        start_time: null,
+        end_time: null,
+      };
+    })
+    .filter((segment): segment is TranscriptSegment => segment !== null);
+}
+
+function dateOnlyToIso(value: string): string | null {
+  const dateOnly = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (dateOnly) {
+    return new Date(
+      Date.UTC(
+        Number(dateOnly[1]),
+        Number(dateOnly[2]) - 1,
+        Number(dateOnly[3]),
+      ),
+    ).toISOString();
+  }
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+}
+
+function parseDurationSecs(value: string | null): number | null {
+  if (!value) return null;
+  const lower = value.toLowerCase();
+  const hours = lower.match(/(\d+(?:\.\d+)?)\s*(?:h|hr|hrs|hour|hours)\b/);
+  const minutes = lower.match(
+    /(\d+(?:\.\d+)?)\s*(?:m|min|mins|minute|minutes)\b/,
+  );
+  const seconds = lower.match(
+    /(\d+(?:\.\d+)?)\s*(?:s|sec|secs|second|seconds)\b/,
+  );
+  const total =
+    (hours ? Number(hours[1]) * 3600 : 0) +
+    (minutes ? Number(minutes[1]) * 60 : 0) +
+    (seconds ? Number(seconds[1]) : 0);
+  if (total > 0 && Number.isFinite(total)) return total;
+
+  const bare = Number(lower.replace(/[^0-9.]/g, ""));
+  return Number.isFinite(bare) && bare > 0 ? bare * 60 : null;
 }
 
 function voxTermStartedAt(path: string, raw: string): string | null {
