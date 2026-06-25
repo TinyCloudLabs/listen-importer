@@ -22,9 +22,13 @@ describe("ImporterStore", () => {
       mediaDir: join(tempDir, "media"),
       downsampledDir: join(tempDir, "downsampled"),
       transcriptsDir: join(tempDir, "transcripts"),
+      listenAppId: "test-app-id",
       listenSqlDb: "test-db",
       listenKvPrefix: "test-prefix",
       listenAppSpace: "applications",
+      mediaKvPath: "importer/media",
+      metadataKvPath: "importer/metadata",
+      transcriptKvPath: "importer/transcripts",
     };
     const store = await openStore(config);
     const recording: ClonedRecording = {
@@ -91,9 +95,13 @@ describe("ImporterStore", () => {
       mediaDir: join(tempDir, "media"),
       downsampledDir: join(tempDir, "downsampled"),
       transcriptsDir: join(tempDir, "transcripts"),
+      listenAppId: "test-app-id",
       listenSqlDb: "test-db",
       listenKvPrefix: "test-prefix",
       listenAppSpace: "applications",
+      mediaKvPath: "importer/media",
+      metadataKvPath: "importer/metadata",
+      transcriptKvPath: "importer/transcripts",
     };
     const store = await openStore(config);
     const base: ClonedRecording = {

@@ -49,9 +49,13 @@ describe("upload", () => {
       mediaDir: join(tempDir, "media"),
       downsampledDir: join(tempDir, "downsampled"),
       transcriptsDir: join(tempDir, "transcripts"),
+      listenAppId: "test-prefix",
       listenSqlDb: "test-prefix/conversations",
       listenKvPrefix: "test-prefix",
       listenAppSpace: "applications",
+      mediaKvPath: "importer/media",
+      metadataKvPath: "importer/metadata",
+      transcriptKvPath: "importer/transcripts",
     };
     const store = await openStore(config);
     const sha256 =
@@ -83,17 +87,26 @@ describe("upload", () => {
     expect(result).toEqual({ uploaded: 0, published: 1, failed: 0 });
 
     const calls = spawnSync.mock.calls as unknown as SpawnCall[];
-    const transcriptCall = calls.find(([, argv]) => {
+    const transcriptKvCall = calls.find(([, argv]) => {
       return (
         argv[0] === "kv" &&
         argv[1] === "put" &&
-        argv[2] === "test-prefix/transcript/rec-abcdef1234567890abcdef12"
+        argv[2]?.startsWith("test-prefix/transcript/")
       );
     });
-    expect(transcriptCall).toBeDefined();
-    const transcriptArgs = transcriptCall![1];
-    expect(transcriptArgs.slice(-2)).toEqual(["--space", "applications"]);
-    expect(JSON.parse(transcriptArgs[3]!)).toEqual([
+    expect(transcriptKvCall).toBeUndefined();
+
+    const conversationInsert = calls.find(([, argv]) => {
+      return (
+        argv[0] === "sql" &&
+        argv[1] === "execute" &&
+        argv[2]?.includes("INSERT OR REPLACE INTO conversation")
+      );
+    });
+    expect(conversationInsert).toBeDefined();
+    const paramsIndex = conversationInsert![1].indexOf("--params") + 1;
+    const params = JSON.parse(conversationInsert![1][paramsIndex]!);
+    expect(JSON.parse(params[10]!)).toEqual([
       {
         index: 0,
         speaker_id: "speaker-a",
@@ -104,6 +117,7 @@ describe("upload", () => {
         language: null,
       },
     ]);
+    expect(params[11]).toBe("Hello there");
 
     const sqlCalls = calls.filter(([, argv]) => {
       return argv[0] === "sql" && argv[1] === "execute";
@@ -135,9 +149,13 @@ describe("upload", () => {
       mediaDir: join(tempDir, "media"),
       downsampledDir: join(tempDir, "downsampled"),
       transcriptsDir: join(tempDir, "transcripts"),
+      listenAppId: "test-prefix",
       listenSqlDb: "test-prefix/conversations",
       listenKvPrefix: "test-prefix",
       listenAppSpace: "applications",
+      mediaKvPath: "importer/media",
+      metadataKvPath: "importer/metadata",
+      transcriptKvPath: "importer/transcripts",
     };
     const store = await openStore(config);
     const sha256 =
@@ -178,14 +196,14 @@ describe("upload", () => {
     expect(result).toEqual({ uploaded: 0, published: 1, failed: 0 });
 
     const calls = spawnSync.mock.calls as unknown as SpawnCall[];
-    const transcriptCall = calls.find(([, argv]) => {
+    const transcriptKvCall = calls.find(([, argv]) => {
       return (
         argv[0] === "kv" &&
         argv[1] === "put" &&
-        argv[2] === "test-prefix/transcript/sc-1234567890abcdef12345678"
+        argv[2]?.startsWith("test-prefix/transcript/")
       );
     });
-    expect(transcriptCall).toBeDefined();
+    expect(transcriptKvCall).toBeUndefined();
 
     const conversationInsert = calls.find(([, argv]) => {
       return (
@@ -202,5 +220,7 @@ describe("upload", () => {
     expect(params[3]).toBe(
       "soundcore-sync:soundcore-sync:2026-06/2026-06-08-planning.md",
     );
+    expect(JSON.parse(params[10]!)).toHaveLength(1);
+    expect(params[11]).toBe("Soundcore line");
   });
 });
