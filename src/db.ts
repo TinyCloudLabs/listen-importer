@@ -331,7 +331,7 @@ export class ImporterStore {
   }
 
   hasSourceSnapshot(recording: RecorderFile): boolean {
-    return this.findSourceSnapshot(recording) !== null;
+    return this.findSourceSnapshot(recording) != null;
   }
 
   findSourceSnapshot(recording: RecorderFile): RecordingRow | null {
@@ -347,11 +347,11 @@ export class ImporterStore {
           recording.sourceId,
           recording.sizeBytes,
           recording.modifiedAt,
-        ) as RecordingRow | null;
-      return row;
+        ) as RecordingRow | undefined;
+      return row ?? null;
     }
 
-    return this.db
+    const row = this.db
       .prepare(
         `SELECT * FROM recordings
          WHERE source_path = ? AND size_bytes = ? AND modified_at = ?
@@ -361,7 +361,8 @@ export class ImporterStore {
         recording.sourcePath,
         recording.sizeBytes,
         recording.modifiedAt,
-      ) as RecordingRow | null;
+      ) as RecordingRow | undefined;
+    return row ?? null;
   }
 
   counts(listenSource?: ListenSource): StatusCounts {

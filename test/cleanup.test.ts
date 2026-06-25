@@ -1,7 +1,7 @@
 import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "vitest";
 import {
   cleanupRecorderCaptures,
   expectedRecorderConfirmation,
@@ -143,6 +143,7 @@ async function setupRecorderFiles(): Promise<{
       listenSqlDb: "test-db",
       listenKvPrefix: "test-prefix",
       listenAppSpace: "applications",
+      listenSecretScope: "",
       mediaKvPath: "importer/media",
       metadataKvPath: "importer/metadata",
       transcriptKvPath: "importer/transcripts",

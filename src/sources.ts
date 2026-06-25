@@ -228,7 +228,7 @@ async function scanSoundcoreSync(
   for (const path of files) {
     if (path.split(/[\\/]/).some((part) => part.startsWith("."))) continue;
     const stats = await stat(path);
-    const raw = await Bun.file(path).text();
+    const raw = await readFile(path, "utf8");
     const parsed = parseSoundcoreSyncMarkdown(raw, path);
     const recordedAt =
       parsed.recordedAt ??
