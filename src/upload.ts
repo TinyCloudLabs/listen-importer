@@ -40,6 +40,8 @@ const CONVERSATION_TABLE_SQL = `CREATE TABLE IF NOT EXISTS conversation (
   duration_secs   REAL,
   summary         TEXT,
   metadata        TEXT,
+  transcript_json TEXT,
+  transcript_text TEXT,
   created_at      TEXT NOT NULL,
   updated_at      TEXT NOT NULL
 )`;
@@ -232,10 +234,10 @@ async function publishConversation(
   const conversationId = conversationIdFor(row);
   const now = new Date().toISOString();
   const startedAt = row.recorded_at ?? row.modified_at ?? now;
-  const endedAt = row.duration_secs
-    ? addSeconds(startedAt, row.duration_secs)
-    : null;
   const transcript = await loadTranscript(row);
+  const durationSecs = row.duration_secs ?? transcriptDurationSecs(transcript);
+  const endedAt =
+    durationSecs != null ? addSeconds(startedAt, durationSecs) : null;
   const metadata = {
     import_type: row.import_type,
     source_adapter: row.source_adapter,
@@ -264,22 +266,13 @@ async function publishConversation(
     source_metadata: parseMetadata(row.metadata_json),
   };
 
-  const conversationTranscriptKey = remoteKey(
-    config,
-    `transcript/${conversationId}`,
-  );
   const appOptions = appSpaceOptions(config, options);
-  putKvString(
-    conversationTranscriptKey,
-    `${JSON.stringify(transcript, null, 2)}\n`,
-    appOptions,
-  );
   sqlExecute(
     config.listenSqlDb,
     `INSERT OR REPLACE INTO conversation (
       id, title, source, source_id, source_url, started_at, ended_at, duration_secs,
-      summary, metadata, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      summary, metadata, transcript_json, transcript_text, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       conversationId,
       titleFor(row),
@@ -288,9 +281,11 @@ async function publishConversation(
       null,
       startedAt,
       endedAt,
-      row.duration_secs,
+      durationSecs,
       null,
       JSON.stringify(metadata),
+      JSON.stringify(transcript),
+      transcriptTextFor(transcript),
       now,
       now,
     ],
@@ -341,23 +336,42 @@ function metadataFor(
   };
 }
 
+export function mediaKeyPathFor(
+  config: Pick<AppConfig, "mediaKvPath">,
+  row: RecordingRow,
+  audio: AudioSource,
+): string {
+  return `${config.mediaKvPath}/${row.sha256.slice(0, 2)}/${row.sha256}${audio.extension}`;
+}
+
 function mediaKeyFor(
   config: AppConfig,
   row: RecordingRow,
   audio: AudioSource,
 ): string {
-  return remoteKey(
-    config,
-    `importer/media/${row.sha256.slice(0, 2)}/${row.sha256}${audio.extension}`,
-  );
+  return remoteKey(config, mediaKeyPathFor(config, row, audio));
+}
+
+export function metadataKeyPathFor(
+  config: Pick<AppConfig, "metadataKvPath">,
+  row: RecordingRow,
+): string {
+  return `${config.metadataKvPath}/${row.sha256}.json`;
 }
 
 function metadataKeyFor(config: AppConfig, row: RecordingRow): string {
-  return remoteKey(config, `importer/metadata/${row.sha256}.json`);
+  return remoteKey(config, metadataKeyPathFor(config, row));
+}
+
+export function transcriptImportKeyPathFor(
+  config: Pick<AppConfig, "transcriptKvPath">,
+  row: RecordingRow,
+): string {
+  return `${config.transcriptKvPath}/${row.sha256}.json`;
 }
 
 function transcriptImportKeyFor(config: AppConfig, row: RecordingRow): string {
-  return remoteKey(config, `importer/transcripts/${row.sha256}.json`);
+  return remoteKey(config, transcriptImportKeyPathFor(config, row));
 }
 
 function titleFor(row: RecordingRow): string {
@@ -473,6 +487,25 @@ function speakerIdFor(speakerName: string, index: number): string {
 
 function numberOrNull(value: number | null | undefined): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+export function transcriptTextFor(
+  transcript: PublishedTranscriptSegment[],
+): string {
+  return transcript
+    .map((segment) => segment.text)
+    .filter((text) => text.length > 0)
+    .join("\n");
+}
+
+export function transcriptDurationSecs(
+  transcript: PublishedTranscriptSegment[],
+): number | null {
+  return transcript.reduce<number | null>((max, segment) => {
+    const end = segment.end_time;
+    if (end == null) return max;
+    return max == null ? end : Math.max(max, end);
+  }, null);
 }
 
 function appSpaceOptions(

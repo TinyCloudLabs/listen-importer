@@ -30,11 +30,20 @@ Remote defaults:
 - Listen KV prefix: `xyz.tinycloud.listen`
 - Listen app space: `applications`
 
-Listen is a manifest app. Published conversation rows, participant rows, and
-`transcript/{conversationId}` blobs are written to the `applications` space so
-Listen and Feed read the same canonical data. Importer media and metadata blobs
-remain under the existing `xyz.tinycloud.listen/importer/...` KV paths. Override
-the app space with `LISTEN_IMPORTER_APP_SPACE`; publishing requires a `tc` CLI
+Listen is a manifest app. Published conversation rows and participant rows are
+written to the `applications` space so Listen and Feed read the same canonical
+data. Transcripts are stored in the `conversation.transcript_json` and
+`conversation.transcript_text` columns directly — there is no separate
+`transcript/{conversationId}` KV blob. If a fresh DB does not yet have those
+columns, run `scripts/migrate-transcript-columns.sh` once.
+
+Importer media and per-recording metadata blobs are still written to KV under
+configurable scoped paths (defaults: `importer/media`, `importer/metadata`,
+`importer/transcripts`) and can be overridden via `LISTEN_IMPORTER_MEDIA_KV_PATH`,
+`LISTEN_IMPORTER_METADATA_KV_PATH`, `LISTEN_IMPORTER_TRANSCRIPT_KV_PATH`. The
+canonical app id is `LISTEN_IMPORTER_APP_ID` (default `xyz.tinycloud.listen`);
+SQL db and KV prefix derive from it unless explicitly overridden. Override the
+app space with `LISTEN_IMPORTER_APP_SPACE`; publishing requires a `tc` CLI
 with `kv --space` support. This package pins `@tinycloud/cli@0.6.0` and prefers
 that local binary when available; override with `LISTEN_IMPORTER_TC_PATH`.
 
@@ -61,9 +70,9 @@ DEEPGRAM_API_KEY=... listen-importer transcribe --provider deepgram
 ASSEMBLYAI_API_KEY=... listen-importer transcribe --provider assemblyai
 ```
 
-`upload --publish` makes recordings visible in Listen as `source = recorder`. When a transcript exists locally, it writes that transcript to the Listen transcript KV path for the conversation.
+`upload --publish` makes recordings visible in Listen as `source = recorder`. When a transcript exists locally, it is written into the `transcript_json` and `transcript_text` columns of the conversation row.
 
-Downsampling is non-destructive. Originals stay in `media/`; smaller derived files are written to `downsampled/`. Transcription automatically prefers downsampled audio when it exists. Uploads use originals by default, or downsampled audio with `--use-downsampled`. Use `upload --publish --transcripts-only` when you only need Listen conversation rows and transcript blobs.
+Downsampling is non-destructive. Originals stay in `media/`; smaller derived files are written to `downsampled/`. Transcription automatically prefers downsampled audio when it exists. Uploads use originals by default, or downsampled audio with `--use-downsampled`. Use `upload --publish --transcripts-only` when you only need Listen conversation rows with their transcripts.
 
 Use `--source recorder`, `--source voice_memos`, `--source voxterm`, or `--source soundcore_sync` on `status`, `list`, `preprocess`, `downsample`, `transcribe`, and `upload` to keep each import workflow scoped. Hyphenated aliases `voice-memos` and `soundcore-sync` are accepted for the snake-case Listen source values, and `--source all` is the default.
 
