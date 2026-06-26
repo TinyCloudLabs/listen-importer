@@ -1,4 +1,5 @@
 import { basename } from "node:path";
+import { readFile } from "node:fs/promises";
 import type { AppConfig } from "./config";
 import { remoteKey } from "./config";
 import type { ImporterStore, RecordingRow } from "./db";
@@ -242,7 +243,7 @@ async function publishConversation(
     import_type: row.import_type,
     source_adapter: row.source_adapter,
     listen_source: row.listen_source,
-    importer: "listen-importer",
+    importer: "listen",
     importer_recording_id: row.id,
     source_id: row.source_id,
     source_uri: row.source_uri,
@@ -409,7 +410,7 @@ async function loadTranscript(
   row: RecordingRow,
 ): Promise<PublishedTranscriptSegment[]> {
   if (!row.transcript_path) return [];
-  const raw = await Bun.file(row.transcript_path).text();
+  const raw = await readFile(row.transcript_path, "utf8");
   const parsed = JSON.parse(raw) as TranscriptSegment[];
   return Array.isArray(parsed) ? normalizeTranscriptSegments(parsed) : [];
 }

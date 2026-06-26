@@ -1,15 +1,17 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
-const spawnSync = mock(() => ({
-  status: 0,
-  stdout: "",
-  stderr: "",
-}));
+const spawnSync = vi.hoisted(() =>
+  vi.fn(() => ({
+    status: 0,
+    stdout: "",
+    stderr: "",
+  })),
+);
 
-mock.module("node:child_process", () => ({ spawnSync }));
+vi.mock("node:child_process", () => ({ spawnSync }));
 
 const { openStore } = await import("../src/db");
 const { uploadPending } = await import("../src/upload");
@@ -53,6 +55,7 @@ describe("upload", () => {
       listenSqlDb: "test-prefix/conversations",
       listenKvPrefix: "test-prefix",
       listenAppSpace: "applications",
+      listenSecretScope: "listen",
       mediaKvPath: "importer/media",
       metadataKvPath: "importer/metadata",
       transcriptKvPath: "importer/transcripts",
@@ -153,6 +156,7 @@ describe("upload", () => {
       listenSqlDb: "test-prefix/conversations",
       listenKvPrefix: "test-prefix",
       listenAppSpace: "applications",
+      listenSecretScope: "listen",
       mediaKvPath: "importer/media",
       metadataKvPath: "importer/metadata",
       transcriptKvPath: "importer/transcripts",

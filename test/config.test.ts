@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
   DEFAULT_LISTEN_APP_ID,
   getConfig,
@@ -6,12 +6,12 @@ import {
 } from "../src/config";
 
 const ENV_KEYS = [
-  "LISTEN_IMPORTER_APP_ID",
-  "LISTEN_IMPORTER_SQL_DB",
-  "LISTEN_IMPORTER_KV_PREFIX",
-  "LISTEN_IMPORTER_MEDIA_KV_PATH",
-  "LISTEN_IMPORTER_METADATA_KV_PATH",
-  "LISTEN_IMPORTER_TRANSCRIPT_KV_PATH",
+  "LISTEN_APP_ID",
+  "LISTEN_SQL_DB",
+  "LISTEN_KV_PREFIX",
+  "LISTEN_MEDIA_KV_PATH",
+  "LISTEN_METADATA_KV_PATH",
+  "LISTEN_TRANSCRIPT_KV_PATH",
 ] as const;
 
 const originalEnv = new Map<string, string | undefined>();
@@ -44,11 +44,11 @@ describe("config", () => {
   });
 
   test("lets the app id drive the SQL and KV defaults when overridden", () => {
-    process.env.LISTEN_IMPORTER_APP_ID = "xyz.tinycloud.listen-beta";
-    process.env.LISTEN_IMPORTER_KV_PREFIX = "/listen-beta/";
-    process.env.LISTEN_IMPORTER_MEDIA_KV_PATH = "/media/";
-    process.env.LISTEN_IMPORTER_METADATA_KV_PATH = "/metadata/";
-    process.env.LISTEN_IMPORTER_TRANSCRIPT_KV_PATH = "/transcripts/";
+    process.env.LISTEN_APP_ID = "xyz.tinycloud.listen-beta";
+    process.env.LISTEN_KV_PREFIX = "/listen-beta/";
+    process.env.LISTEN_MEDIA_KV_PATH = "/media/";
+    process.env.LISTEN_METADATA_KV_PATH = "/metadata/";
+    process.env.LISTEN_TRANSCRIPT_KV_PATH = "/transcripts/";
 
     const config = getConfig();
 

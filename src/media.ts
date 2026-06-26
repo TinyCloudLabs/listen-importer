@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { createReadStream } from "node:fs";
 import { mkdir, readdir, stat, copyFile, writeFile } from "node:fs/promises";
 import { basename, extname, join } from "node:path";
 import type { AppConfig } from "./config";
@@ -203,8 +204,7 @@ export function recordedAtFromName(fileName: string): string | null {
 
 async function hashFile(pathValue: string): Promise<string> {
   const hash = createHash("sha256");
-  const file = Bun.file(pathValue);
-  const stream = file.stream();
+  const stream = createReadStream(pathValue);
 
   for await (const chunk of stream) {
     hash.update(chunk);

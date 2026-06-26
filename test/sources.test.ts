@@ -1,8 +1,8 @@
-import { Database } from "bun:sqlite";
+import Database from "better-sqlite3";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "vitest";
 import { parseSince, scanImportSource } from "../src/sources";
 
 let tempDir: string | null = null;
@@ -39,14 +39,14 @@ describe("source scanning", () => {
         ZPATH TEXT
       )
     `);
-    db.query(`INSERT INTO ZCLOUDRECORDING VALUES (?, ?, ?, ?, ?)`).run(
+    db.prepare(`INSERT INTO ZCLOUDRECORDING VALUES (?, ?, ?, ?, ?)`).run(
       "memo-new-id",
       "New Memo",
       appleSeconds("2026-05-25T15:00:00Z"),
       12.5,
       "memo-new.m4a",
     );
-    db.query(`INSERT INTO ZCLOUDRECORDING VALUES (?, ?, ?, ?, ?)`).run(
+    db.prepare(`INSERT INTO ZCLOUDRECORDING VALUES (?, ?, ?, ?, ?)`).run(
       "memo-old-id",
       "Old Memo",
       appleSeconds("2026-05-24T15:00:00Z"),
@@ -84,7 +84,7 @@ describe("source scanning", () => {
         ZFLAGS INTEGER
       )
     `);
-    db.query(`INSERT INTO ZCLOUDRECORDING VALUES (?, ?, ?, ?, ?, ?)`).run(
+    db.prepare(`INSERT INTO ZCLOUDRECORDING VALUES (?, ?, ?, ?, ?, ?)`).run(
       "active-id",
       "Active Memo",
       appleSeconds("2026-05-25T15:00:00Z"),
@@ -92,7 +92,7 @@ describe("source scanning", () => {
       "active.m4a",
       4,
     );
-    db.query(`INSERT INTO ZCLOUDRECORDING VALUES (?, ?, ?, ?, ?, ?)`).run(
+    db.prepare(`INSERT INTO ZCLOUDRECORDING VALUES (?, ?, ?, ?, ?, ?)`).run(
       "deleted-id",
       "Deleted Memo",
       appleSeconds("2026-05-25T16:00:00Z"),

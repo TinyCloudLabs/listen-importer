@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "vitest";
 import { openStore } from "../src/db";
 import type { AppConfig } from "../src/config";
 import type { ClonedRecording } from "../src/media";
@@ -26,6 +26,7 @@ describe("ImporterStore", () => {
       listenSqlDb: "test-db",
       listenKvPrefix: "test-prefix",
       listenAppSpace: "applications",
+      listenSecretScope: "listen",
       mediaKvPath: "importer/media",
       metadataKvPath: "importer/metadata",
       transcriptKvPath: "importer/transcripts",
@@ -99,6 +100,7 @@ describe("ImporterStore", () => {
       listenSqlDb: "test-db",
       listenKvPrefix: "test-prefix",
       listenAppSpace: "applications",
+      listenSecretScope: "listen",
       mediaKvPath: "importer/media",
       metadataKvPath: "importer/metadata",
       transcriptKvPath: "importer/transcripts",

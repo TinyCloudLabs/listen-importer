@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { audioSourceFor, parseDownsampleFormat } from "../src/downsample";
 import type { RecordingRow } from "../src/db";
 

@@ -1,5 +1,5 @@
 import { mkdir } from "node:fs/promises";
-import { Database } from "bun:sqlite";
+import DatabaseConstructor, { type Database } from "better-sqlite3";
 import type { AppConfig } from "./config";
 import type { ListenSource } from "./listen-source";
 import type { ClonedRecording, RecorderFile } from "./media";
@@ -84,7 +84,7 @@ export async function openStore(config: AppConfig): Promise<ImporterStore> {
   await mkdir(config.mediaDir, { recursive: true });
   await mkdir(config.downsampledDir, { recursive: true });
   await mkdir(config.transcriptsDir, { recursive: true });
-  const db = new Database(config.dbPath, { create: true });
+  const db = new DatabaseConstructor(config.dbPath);
   const store = new ImporterStore(db);
   store.migrate();
   return store;
@@ -188,7 +188,7 @@ export class ImporterStore {
     const existing = this.findExistingRecording(sourceAdapter, recording);
     if (existing) {
       this.db
-        .query(
+        .prepare(
           `UPDATE recordings
            SET source_path = ?, file_name = ?, extension = ?, content_type = ?,
                source_adapter = ?, import_type = ?, listen_source = ?, source_id = ?,
@@ -229,7 +229,7 @@ export class ImporterStore {
     }
 
     this.db
-      .query(
+      .prepare(
         `INSERT INTO recordings (
           id, source_path, file_name, extension, content_type, source_adapter, import_type,
           listen_source, source_id, source_uri, title, artifact_kind, metadata_json, recorder,
@@ -270,7 +270,7 @@ export class ImporterStore {
     const sourceClause = listenSource ? "WHERE listen_source = ?" : "";
     const params = listenSource ? [listenSource, limit] : [limit];
     return this.db
-      .query(
+      .prepare(
         `SELECT * FROM recordings ${sourceClause} ORDER BY created_at DESC LIMIT ?`,
       )
       .all(...params) as RecordingRow[];
@@ -287,7 +287,7 @@ export class ImporterStore {
     const sourceClause = listenSource ? "AND listen_source = ?" : "";
     const params = listenSource ? [listenSource, limit] : [limit];
     return this.db
-      .query(
+      .prepare(
         `SELECT * FROM recordings
          WHERE status IN (${statuses}) ${sourceClause}
          ORDER BY created_at ASC
@@ -304,7 +304,7 @@ export class ImporterStore {
     const sourceClause = listenSource ? "AND listen_source = ?" : "";
     const params = listenSource ? [listenSource, limit] : [limit];
     return this.db
-      .query(
+      .prepare(
         `SELECT * FROM recordings
          WHERE artifact_kind = 'audio' AND ${force ? "1 = 1" : "transcript_path IS NULL"} ${sourceClause}
          ORDER BY created_at ASC
@@ -321,7 +321,7 @@ export class ImporterStore {
     const sourceClause = listenSource ? "AND listen_source = ?" : "";
     const params = listenSource ? [listenSource, limit] : [limit];
     return this.db
-      .query(
+      .prepare(
         `SELECT * FROM recordings
          WHERE artifact_kind = 'audio' AND ${force ? "1 = 1" : "downsampled_path IS NULL"} ${sourceClause}
          ORDER BY created_at ASC
@@ -331,13 +331,13 @@ export class ImporterStore {
   }
 
   hasSourceSnapshot(recording: RecorderFile): boolean {
-    return this.findSourceSnapshot(recording) !== null;
+    return this.findSourceSnapshot(recording) != null;
   }
 
   findSourceSnapshot(recording: RecorderFile): RecordingRow | null {
     if (recording.sourceId) {
       const row = this.db
-        .query(
+        .prepare(
           `SELECT * FROM recordings
            WHERE source_adapter = ? AND source_id = ? AND size_bytes = ? AND modified_at = ?
            LIMIT 1`,
@@ -347,12 +347,12 @@ export class ImporterStore {
           recording.sourceId,
           recording.sizeBytes,
           recording.modifiedAt,
-        ) as RecordingRow | null;
-      return row;
+        ) as RecordingRow | undefined;
+      return row ?? null;
     }
 
-    return this.db
-      .query(
+    const row = this.db
+      .prepare(
         `SELECT * FROM recordings
          WHERE source_path = ? AND size_bytes = ? AND modified_at = ?
          LIMIT 1`,
@@ -361,14 +361,15 @@ export class ImporterStore {
         recording.sourcePath,
         recording.sizeBytes,
         recording.modifiedAt,
-      ) as RecordingRow | null;
+      ) as RecordingRow | undefined;
+    return row ?? null;
   }
 
   counts(listenSource?: ListenSource): StatusCounts {
     const sourceClause = listenSource ? "WHERE listen_source = ?" : "";
     const sourceParams = listenSource ? [listenSource] : [];
     const rows = this.db
-      .query(
+      .prepare(
         `SELECT status, COUNT(*) AS count FROM recordings ${sourceClause} GROUP BY status`,
       )
       .all(...sourceParams) as Array<{
@@ -391,7 +392,7 @@ export class ImporterStore {
       counts.total += Number(row.count);
     }
     const transcriptRow = this.db
-      .query(
+      .prepare(
         `SELECT COUNT(*) AS count FROM recordings
          WHERE transcript_path IS NOT NULL ${listenSource ? "AND listen_source = ?" : ""}`,
       )
@@ -402,7 +403,7 @@ export class ImporterStore {
       counts.total - counts.transcript_ready,
     );
     const downsampleRow = this.db
-      .query(
+      .prepare(
         `SELECT COUNT(*) AS count FROM recordings
          WHERE downsampled_path IS NOT NULL ${listenSource ? "AND listen_source = ?" : ""}`,
       )
@@ -422,7 +423,7 @@ export class ImporterStore {
   ): void {
     const now = new Date().toISOString();
     this.db
-      .query(
+      .prepare(
         `UPDATE recordings
          SET status = 'uploaded', media_kv_key = ?, metadata_kv_key = ?, uploaded_at = ?,
              error = NULL, updated_at = ?
@@ -433,7 +434,7 @@ export class ImporterStore {
 
   markTranscriptUploaded(id: string, transcriptKvKey: string): void {
     this.db
-      .query(
+      .prepare(
         `UPDATE recordings SET transcript_kv_key = ?, updated_at = ? WHERE id = ?`,
       )
       .run(transcriptKvKey, new Date().toISOString(), id);
@@ -442,7 +443,7 @@ export class ImporterStore {
   markPublished(id: string, conversationId: string): void {
     const now = new Date().toISOString();
     this.db
-      .query(
+      .prepare(
         `UPDATE recordings
          SET status = 'published', conversation_id = ?, error = NULL, updated_at = ?
          WHERE id = ?`,
@@ -452,7 +453,7 @@ export class ImporterStore {
 
   markFailed(id: string, error: string): void {
     this.db
-      .query(
+      .prepare(
         `UPDATE recordings SET status = 'failed', error = ?, updated_at = ? WHERE id = ?`,
       )
       .run(error, new Date().toISOString(), id);
@@ -461,7 +462,7 @@ export class ImporterStore {
   markDownsampled(id: string, input: MarkDownsampledInput): void {
     const now = new Date().toISOString();
     this.db
-      .query(
+      .prepare(
         `UPDATE recordings
          SET downsampled_path = ?, downsampled_content_type = ?, downsampled_size_bytes = ?,
              downsampled_format = ?, downsampled_bitrate = ?, downsampled_sample_rate = ?,
@@ -483,7 +484,7 @@ export class ImporterStore {
 
   markDownsampleFailed(id: string, error: string): void {
     this.db
-      .query(
+      .prepare(
         `UPDATE recordings SET downsample_error = ?, updated_at = ? WHERE id = ?`,
       )
       .run(error, new Date().toISOString(), id);
@@ -492,7 +493,7 @@ export class ImporterStore {
   markTranscribed(id: string, input: MarkTranscribedInput): void {
     const now = new Date().toISOString();
     this.db
-      .query(
+      .prepare(
         `UPDATE recordings
          SET transcript_path = ?, transcript_text = ?, transcription_provider = ?,
              transcribed_at = ?, transcription_error = NULL, duration_secs = ?, updated_at = ?
@@ -511,7 +512,7 @@ export class ImporterStore {
 
   markTranscriptionFailed(id: string, error: string): void {
     this.db
-      .query(
+      .prepare(
         `UPDATE recordings SET transcription_error = ?, updated_at = ? WHERE id = ?`,
       )
       .run(error, new Date().toISOString(), id);
@@ -523,21 +524,23 @@ export class ImporterStore {
   ): RecordingRow | null {
     if (recording.sourceId) {
       const sourceMatch = this.db
-        .query(
+        .prepare(
           `SELECT * FROM recordings WHERE source_adapter = ? AND source_id = ?`,
         )
-        .get(sourceAdapter, recording.sourceId) as RecordingRow | null;
+        .get(sourceAdapter, recording.sourceId) as RecordingRow | undefined;
       if (sourceMatch) return sourceMatch;
     }
 
-    return this.db
-      .query(`SELECT * FROM recordings WHERE sha256 = ?`)
-      .get(recording.sha256) as RecordingRow | null;
+    return (
+      (this.db
+        .prepare(`SELECT * FROM recordings WHERE sha256 = ?`)
+        .get(recording.sha256) as RecordingRow | undefined) ?? null
+    );
   }
 
   private ensureColumn(name: string, definition: string): void {
     const columns = this.db
-      .query(`PRAGMA table_info(recordings)`)
+      .prepare(`PRAGMA table_info(recordings)`)
       .all() as Array<{ name: string }>;
     if (!columns.some((column) => column.name === name)) {
       this.db.exec(`ALTER TABLE recordings ADD COLUMN ${name} ${definition}`);

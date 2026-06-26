@@ -6,12 +6,13 @@
 
 set -u
 
-DB="${LISTEN_IMPORTER_SQL_DB:-xyz.tinycloud.listen/conversations}"
-PROFILE="${LISTEN_IMPORTER_PROFILE:-}"
+DB="${LISTEN_SQL_DB:-xyz.tinycloud.listen/conversations}"
+SPACE="${LISTEN_APP_SPACE:-applications}"
+PROFILE="${LISTEN_PROFILE:-}"
 
 run() {
   local stmt="$1"
-  local args=(sql execute "$stmt" --db "$DB" --params "[]")
+  local args=(sql execute "$stmt" --db "$DB" --params "[]" --space "$SPACE")
   if [[ -n "$PROFILE" ]]; then
     args+=(--profile "$PROFILE")
   fi
