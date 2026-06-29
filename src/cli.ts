@@ -547,9 +547,16 @@ function printSecretSetup(
   networkStatus: SecretsNetworkStatus | null,
 ): void {
   console.log("Secret setup:");
+  console.log(`- Open ${secretsAppUrl("ASSEMBLYAI_API_KEY")} to enter the value`);
   if (!networkStatus?.exists) console.log("- tc secrets network init");
-  console.log(`- ${secretPutCommand(scope)}`);
+  console.log(`- Or via CLI: ${secretPutCommand(scope)}`);
   console.log(`- ${permissionsGrantCommand(scope)}`);
+}
+
+const SECRETS_APP_URL = "https://secrets.tinycloud.xyz";
+
+function secretsAppUrl(key: string): string {
+  return `${SECRETS_APP_URL}/?key=${encodeURIComponent(key)}`;
 }
 
 function readSecretsNetworkStatus(
