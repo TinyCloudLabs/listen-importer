@@ -553,10 +553,10 @@ function printSecretSetup(
   console.log(`- ${permissionsGrantCommand(scope)}`);
 }
 
-const SECRETS_APP_URL = "https://secrets.tinycloud.xyz";
+const SECRETS_APP_URL = "https://secrets.tinycloud.xyz/app";
 
 function secretsAppUrl(key: string): string {
-  return `${SECRETS_APP_URL}/?key=${encodeURIComponent(key)}`;
+  return `${SECRETS_APP_URL}?key=${encodeURIComponent(key)}`;
 }
 
 function readSecretsNetworkStatus(

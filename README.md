@@ -83,7 +83,7 @@ listen cleanup-recorder /Volumes/MIC\ MINI
 Transcription prefers AssemblyAI, then falls back to Deepgram. The fastest way
 to set the API key is through the secret manager web app:
 
-<https://secrets.tinycloud.xyz/?key=ASSEMBLYAI_API_KEY>
+<https://secrets.tinycloud.xyz/app?key=ASSEMBLYAI_API_KEY>
 
 It pre-fills the secret name so you can just paste the value. `listen doctor`,
 `listen transcribe`, and `listen permissions` all print this URL when the key
