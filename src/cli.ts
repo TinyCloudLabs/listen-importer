@@ -480,7 +480,7 @@ function tcOptions(args: ParsedArgs): TcOptions {
 function listenCapabilities(config: ReturnType<typeof getConfig>): string[] {
   return [
     `tinycloud.kv:${config.listenAppSpace}:${config.listenKvPrefix}/:get,put,list`,
-    `tinycloud.sql:${config.listenAppSpace}:${config.listenSqlDb}:read,write`,
+    `tinycloud.sql:${config.listenAppSpace}:${config.listenSqlDb}:read,write,schema`,
   ];
 }
 
