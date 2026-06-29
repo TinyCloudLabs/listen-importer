@@ -378,8 +378,19 @@ function resolveProvider(
   if (deepgramKey) return { provider: "deepgram", apiKey: deepgramKey };
 
   throw new Error(
-    `Missing ASSEMBLYAI_API_KEY. Store it with \`${secretPutCommand(options.secretScope ?? config.listenSecretScope)}\`, set ASSEMBLYAI_API_KEY, or pass --api-key.`,
+    [
+      "Missing ASSEMBLYAI_API_KEY.",
+      `Open ${secretsAppUrl("ASSEMBLYAI_API_KEY")} to enter it,`,
+      `or store it via \`${secretPutCommand(options.secretScope ?? config.listenSecretScope)}\`,`,
+      "or set the ASSEMBLYAI_API_KEY env var, or pass --api-key.",
+    ].join(" "),
   );
+}
+
+const SECRETS_APP_URL = "https://secrets.tinycloud.xyz/app";
+
+function secretsAppUrl(key: string): string {
+  return `${SECRETS_APP_URL}?key=${encodeURIComponent(key)}`;
 }
 
 function apiKeyForProvider(
