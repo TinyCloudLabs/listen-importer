@@ -5,55 +5,9 @@ import { remoteKey } from "./config";
 import type { ImporterStore, RecordingRow } from "./db";
 import { audioSourceFor, type AudioSource } from "./downsample";
 import type { ListenSource } from "./listen-source";
+import { ensureConversationSchema, ensureRemoteImporterSchema } from "./schema";
 import type { TranscriptSegment } from "./transcription";
 import { putKvFile, putKvString, sqlExecute, type TcOptions } from "./tc";
-
-const IMPORTER_TABLE_SQL = `CREATE TABLE IF NOT EXISTS listen_importer_recording (
-  id TEXT PRIMARY KEY,
-  file_name TEXT NOT NULL,
-  recorder TEXT NOT NULL,
-  sha256 TEXT NOT NULL,
-  size_bytes INTEGER NOT NULL,
-  content_type TEXT NOT NULL,
-  recorded_at TEXT,
-  local_source_path TEXT,
-  media_kv_key TEXT NOT NULL,
-  metadata_kv_key TEXT NOT NULL,
-  transcript_kv_key TEXT,
-  source_adapter TEXT,
-  import_type TEXT,
-  listen_source TEXT,
-  source_id TEXT,
-  artifact_kind TEXT,
-  uploaded_at TEXT NOT NULL,
-  transcribed_at TEXT,
-  status TEXT NOT NULL
-)`;
-
-const CONVERSATION_TABLE_SQL = `CREATE TABLE IF NOT EXISTS conversation (
-  id              TEXT PRIMARY KEY,
-  title           TEXT,
-  source          TEXT NOT NULL,
-  source_id       TEXT,
-  source_url      TEXT,
-  started_at      TEXT,
-  ended_at        TEXT,
-  duration_secs   REAL,
-  summary         TEXT,
-  metadata        TEXT,
-  transcript_json TEXT,
-  transcript_text TEXT,
-  created_at      TEXT NOT NULL,
-  updated_at      TEXT NOT NULL
-)`;
-
-const PARTICIPANT_TABLE_SQL = `CREATE TABLE IF NOT EXISTS participant (
-  id              TEXT PRIMARY KEY,
-  conversation_id TEXT NOT NULL,
-  name            TEXT NOT NULL,
-  email           TEXT,
-  speaker_label   TEXT
-)`;
 
 export interface UploadOptions extends TcOptions {
   publish?: boolean;
@@ -87,9 +41,10 @@ export async function uploadPending(
   if (options.transcriptsOnly && !options.publish) {
     throw new Error("--transcripts-only requires --publish");
   }
-  if (!options.transcriptsOnly) ensureRemoteImporterSchema(config, options);
+  if (!options.transcriptsOnly)
+    await ensureRemoteImporterSchema(config, options);
   if (options.publish)
-    ensureConversationSchema(config, appSpaceOptions(config, options));
+    await ensureConversationSchema(config, appSpaceOptions(config, options));
 
   const rows = store.pendingUpload(
     limit,
@@ -173,18 +128,6 @@ export async function uploadPending(
   }
 
   return result;
-}
-
-function ensureRemoteImporterSchema(
-  config: AppConfig,
-  options: TcOptions,
-): void {
-  sqlExecute(config.listenSqlDb, IMPORTER_TABLE_SQL, [], options);
-}
-
-function ensureConversationSchema(config: AppConfig, options: TcOptions): void {
-  sqlExecute(config.listenSqlDb, CONVERSATION_TABLE_SQL, [], options);
-  sqlExecute(config.listenSqlDb, PARTICIPANT_TABLE_SQL, [], options);
 }
 
 function insertRemoteImporterRow(
