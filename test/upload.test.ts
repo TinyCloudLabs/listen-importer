@@ -12,6 +12,10 @@ const spawnSync = vi.hoisted(() =>
 );
 
 vi.mock("node:child_process", () => ({ spawnSync }));
+vi.mock("../src/schema", () => ({
+  ensureConversationSchema: vi.fn(async () => undefined),
+  ensureRemoteImporterSchema: vi.fn(async () => undefined),
+}));
 
 const { openStore } = await import("../src/db");
 const { uploadPending } = await import("../src/upload");
