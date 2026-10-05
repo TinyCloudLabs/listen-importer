@@ -6,6 +6,7 @@ import type { ImporterStore, RecordingRow } from "./db";
 import { audioSourceFor, type AudioSource } from "./downsample";
 import type { ListenSource } from "./listen-source";
 import { ensureConversationSchema, ensureRemoteImporterSchema } from "./schema";
+import { isStorageFullError } from "./storage";
 import type { TranscriptSegment } from "./transcription";
 import { putKvFile, putKvString, sqlExecute, type TcOptions } from "./tc";
 
@@ -20,6 +21,10 @@ export interface UploadResult {
   uploaded: number;
   published: number;
   failed: number;
+  /** TinyCloud storage is full: the batch stopped at the first rejected write. */
+  stoppedForStorage: boolean;
+  /** Recordings in this batch left pending (not saved) because of the stop. */
+  remaining: number;
 }
 
 interface PublishedTranscriptSegment {
@@ -41,19 +46,30 @@ export async function uploadPending(
   if (options.transcriptsOnly && !options.publish) {
     throw new Error("--transcripts-only requires --publish");
   }
-  if (!options.transcriptsOnly)
-    await ensureRemoteImporterSchema(config, options);
-  if (options.publish)
-    await ensureConversationSchema(config, appSpaceOptions(config, options));
-
   const rows = store.pendingUpload(
     limit,
     Boolean(options.publish),
     options.listenSource,
   );
-  const result: UploadResult = { uploaded: 0, published: 0, failed: 0 };
+  const result: UploadResult = {
+    uploaded: 0,
+    published: 0,
+    failed: 0,
+    stoppedForStorage: false,
+    remaining: 0,
+  };
 
-  for (const row of rows) {
+  try {
+    if (!options.transcriptsOnly)
+      await ensureRemoteImporterSchema(config, options);
+    if (options.publish)
+      await ensureConversationSchema(config, appSpaceOptions(config, options));
+  } catch (err) {
+    if (!isStorageFullError(err)) throw err;
+    return { ...result, stoppedForStorage: true, remaining: rows.length };
+  }
+
+  for (const [index, row] of rows.entries()) {
     try {
       const audio =
         row.artifact_kind === "audio"
@@ -119,6 +135,13 @@ export async function uploadPending(
         result.published += 1;
       }
     } catch (err) {
+      // A full store rejects every later write too: stop without retrying and
+      // leave this and the remaining rows in their pending status for a rerun.
+      if (isStorageFullError(err)) {
+        result.stoppedForStorage = true;
+        result.remaining = rows.length - index;
+        break;
+      }
       result.failed += 1;
       store.markFailed(
         row.id,
