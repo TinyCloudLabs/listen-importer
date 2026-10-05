@@ -26,6 +26,11 @@ import {
   migrateListenState,
 } from "./state-migration";
 import {
+  MANAGE_STORAGE_URL,
+  STORAGE_FULL_MESSAGE,
+  isStorageFullError,
+} from "./storage";
+import {
   authStatus,
   createDelegation,
   getSecret,
@@ -307,6 +312,14 @@ async function main(): Promise<void> {
       console.log(
         `Uploaded ${result.uploaded}; published ${result.published}; failed ${result.failed}`,
       );
+      if (result.stoppedForStorage) {
+        console.error(STORAGE_FULL_MESSAGE);
+        console.error(
+          `Upload stopped: ${result.remaining} ${result.remaining === 1 ? "recording was" : "recordings were"} not saved and will be retried on the next \`${COMMAND} upload\`.`,
+        );
+        console.error(`Manage storage: ${MANAGE_STORAGE_URL}`);
+        process.exitCode = 1;
+      }
       break;
     }
 
@@ -728,6 +741,11 @@ function printCleanupRecorderResult(
 }
 
 main().catch((err) => {
+  if (isStorageFullError(err)) {
+    console.error(STORAGE_FULL_MESSAGE);
+    console.error(`Manage storage: ${MANAGE_STORAGE_URL}`);
+    process.exit(1);
+  }
   console.error(`Error: ${err instanceof Error ? err.message : String(err)}`);
   console.error(`Run '${COMMAND} help' for usage.`);
   process.exit(1);

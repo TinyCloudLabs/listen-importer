@@ -18,6 +18,22 @@ export interface TcRunResult {
   stderr: string;
 }
 
+/**
+ * A failed `tc` invocation. `code` is the error code tc printed (its
+ * non-interactive stderr is `{"error": {"code", "message"}}`), when present.
+ */
+export class TcCommandError extends Error {
+  readonly exitCode: number | null;
+  readonly code: string | null;
+
+  constructor(message: string, exitCode: number | null, code: string | null) {
+    super(message);
+    this.name = "TcCommandError";
+    this.exitCode = exitCode;
+    this.code = code;
+  }
+}
+
 export interface SecretsNetworkStatus {
   networkId: string | null;
   exists: boolean;
@@ -62,7 +78,12 @@ export function runTc(args: string[], options: TcOptions = {}): TcRunResult {
       result.stderr.trim() ||
       result.stdout.trim() ||
       `tc exited ${result.status}`;
-    throw new Error(`${tc} ${fullArgs.join(" ")} failed: ${detail}`);
+    const code = /"code"\s*:\s*"([A-Za-z_]+)"/.exec(detail)?.[1] ?? null;
+    throw new TcCommandError(
+      `${tc} ${fullArgs.join(" ")} failed: ${detail}`,
+      result.status,
+      code,
+    );
   }
 
   return {

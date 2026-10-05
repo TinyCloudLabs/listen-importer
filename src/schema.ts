@@ -192,7 +192,7 @@ async function applyMigrations(
     migrations,
   });
   if (!result.ok) {
-    throw new Error(result.error.message);
+    throw new Error(result.error.message, { cause: result.error });
   }
 }
 

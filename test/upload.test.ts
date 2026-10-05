@@ -19,13 +19,14 @@ vi.mock("../src/schema", () => ({
 
 const { openStore } = await import("../src/db");
 const { uploadPending } = await import("../src/upload");
+const { ensureRemoteImporterSchema } = await import("../src/schema");
 
 type SpawnCall = [string, string[], unknown?];
 
 let tempDir: string | null = null;
 
 beforeEach(() => {
-  spawnSync.mockClear();
+  spawnSync.mockReset();
 });
 
 afterEach(async () => {
@@ -91,7 +92,13 @@ describe("upload", () => {
     });
     store.close();
 
-    expect(result).toEqual({ uploaded: 0, published: 1, failed: 0 });
+    expect(result).toEqual({
+      uploaded: 0,
+      published: 1,
+      failed: 0,
+      stoppedForStorage: false,
+      remaining: 0,
+    });
 
     const calls = spawnSync.mock.calls as unknown as SpawnCall[];
     const transcriptKvCall = calls.find(([, argv]) => {
@@ -201,7 +208,13 @@ describe("upload", () => {
     });
     store.close();
 
-    expect(result).toEqual({ uploaded: 0, published: 1, failed: 0 });
+    expect(result).toEqual({
+      uploaded: 0,
+      published: 1,
+      failed: 0,
+      stoppedForStorage: false,
+      remaining: 0,
+    });
 
     const calls = spawnSync.mock.calls as unknown as SpawnCall[];
     const transcriptKvCall = calls.find(([, argv]) => {
@@ -231,4 +244,174 @@ describe("upload", () => {
     expect(JSON.parse(params[10]!)).toHaveLength(1);
     expect(params[11]).toBe("Soundcore line");
   });
+
+  test.each([
+    {
+      variant: "tc error code",
+      stderr: JSON.stringify({
+        error: {
+          code: "STORAGE_QUOTA_EXCEEDED",
+          message: "Write rejected",
+        },
+      }),
+      status: 1,
+    },
+    {
+      variant: "node text from an older tc",
+      stderr: JSON.stringify({
+        error: {
+          code: "ERROR",
+          message:
+            "SQL execute failed: 402 - Storage quota exceeded. Used: 10 bytes, Limit: 0 bytes",
+        },
+      }),
+      status: 1,
+    },
+    { variant: "tc storage exit code", stderr: "rejected", status: 8 },
+  ])(
+    "stops at the first storage rejection ($variant) and leaves the rest pending",
+    async ({ stderr, status }) => {
+      const { config, store, shas } = await seedTranscripts(3);
+      const attempted: string[] = [];
+      spawnSync.mockImplementation(((_tc: string, argv: string[]) => {
+        const sha = shas.find((candidate) =>
+          argv.some((arg) => arg.includes(candidate)),
+        );
+        if (sha && !attempted.includes(sha)) attempted.push(sha);
+        return sha === attempted[1]
+          ? { status, stdout: "", stderr }
+          : { status: 0, stdout: "", stderr: "" };
+      }) as never);
+
+      const result = await uploadPending(config, store, 10, {});
+      const statuses = Object.fromEntries(
+        store.list().map((row) => [row.id, [row.status, row.error]]),
+      );
+      store.close();
+
+      expect(result).toEqual({
+        uploaded: 1,
+        published: 0,
+        failed: 0,
+        stoppedForStorage: true,
+        remaining: 2,
+      });
+      expect(attempted).toHaveLength(2);
+      const rejectedCalls = (
+        spawnSync.mock.calls as unknown as SpawnCall[]
+      ).filter(([, argv]) => argv.some((arg) => arg.includes(attempted[1]!)));
+      expect(rejectedCalls).toHaveLength(1);
+
+      const untouched = shas.find((sha) => !attempted.includes(sha))!;
+      expect(statuses[attempted[0]!]).toEqual(["uploaded", null]);
+      expect(statuses[attempted[1]!]).toEqual(["cloned", null]);
+      expect(statuses[untouched]).toEqual(["cloned", null]);
+    },
+  );
+
+  test("keeps going after a failure that is not a storage rejection", async () => {
+    const { config, store, shas } = await seedTranscripts(3);
+    const attempted: string[] = [];
+    spawnSync.mockImplementation(((_tc: string, argv: string[]) => {
+      const sha = shas.find((candidate) =>
+        argv.some((arg) => arg.includes(candidate)),
+      );
+      if (sha && !attempted.includes(sha)) attempted.push(sha);
+      return sha === attempted[1]
+        ? { status: 6, stdout: "", stderr: "fetch failed" }
+        : { status: 0, stdout: "", stderr: "" };
+    }) as never);
+
+    const result = await uploadPending(config, store, 10, {});
+    const statuses = Object.fromEntries(
+      store.list().map((row) => [row.id, row.status]),
+    );
+    store.close();
+
+    expect(result).toEqual({
+      uploaded: 2,
+      published: 0,
+      failed: 1,
+      stoppedForStorage: false,
+      remaining: 0,
+    });
+    expect(attempted).toHaveLength(3);
+    expect(statuses[attempted[1]!]).toBe("failed");
+  });
+
+  test("stops before any recording when the schema migration is rejected for storage", async () => {
+    const { config, store } = await seedTranscripts(2);
+    vi.mocked(ensureRemoteImporterSchema).mockRejectedValueOnce(
+      new Error("SQL execute failed: 402 - Storage quota exceeded", {
+        cause: { code: "NETWORK_ERROR" },
+      }),
+    );
+
+    const result = await uploadPending(config, store, 10, {});
+    const statuses = store.list().map((row) => row.status);
+    store.close();
+
+    expect(result).toEqual({
+      uploaded: 0,
+      published: 0,
+      failed: 0,
+      stoppedForStorage: true,
+      remaining: 2,
+    });
+    expect(spawnSync).not.toHaveBeenCalled();
+    expect(statuses).toEqual(["cloned", "cloned"]);
+  });
 });
+
+async function seedTranscripts(count: number) {
+  tempDir = await mkdtemp(join(tmpdir(), "listen-importer-upload-"));
+  const config = {
+    homeDir: tempDir,
+    dbPath: join(tempDir, "state.sqlite"),
+    mediaDir: join(tempDir, "media"),
+    downsampledDir: join(tempDir, "downsampled"),
+    transcriptsDir: join(tempDir, "transcripts"),
+    listenAppId: "test-prefix",
+    listenSqlDb: "test-prefix/conversations",
+    listenKvPrefix: "test-prefix",
+    listenAppSpace: "applications",
+    listenSecretScope: "listen",
+    mediaKvPath: "importer/media",
+    metadataKvPath: "importer/metadata",
+    transcriptKvPath: "importer/transcripts",
+  };
+  const store = await openStore(config);
+  const shas: string[] = [];
+  for (let index = 0; index < count; index += 1) {
+    const sha256 = String(index + 1).repeat(64);
+    const transcriptPath = join(tempDir, `transcript-${index}.json`);
+    await writeFile(
+      transcriptPath,
+      JSON.stringify([{ speaker_name: "Ada", text: `Line ${index}` }]),
+    );
+    store.upsertRecording({
+      id: sha256,
+      sha256,
+      sourcePath: `/Soundcore/${index}.md`,
+      localPath: join(tempDir, "media", `${index}.md`),
+      fileName: `${index}.md`,
+      extension: ".md",
+      contentType: "text/markdown",
+      sourceAdapter: "soundcore-sync",
+      importType: "soundcore-transcript",
+      listenSource: "soundcore_sync",
+      sourceId: `soundcore-sync:${index}.md`,
+      sourceUri: `/Soundcore/${index}.md`,
+      title: `Recording ${index}`,
+      artifactKind: "transcript",
+      recorder: "soundcore-sync",
+      sizeBytes: 12,
+      recordedAt: "2026-06-08T00:00:00.000Z",
+      modifiedAt: "2026-06-08T00:00:00.000Z",
+      transcriptPath,
+      durationSecs: 60,
+    });
+    shas.push(sha256);
+  }
+  return { config, store, shas };
+}
