@@ -2,13 +2,15 @@ export const STORAGE_FULL_MESSAGE =
   "Your TinyCloud storage is full, so this change was not saved. Reading still works. Free up space or upgrade your plan to save again.";
 export const MANAGE_STORAGE_URL = "https://account.tinycloud.xyz/billing";
 
-/** Dedicated `tc` exit code for a storage rejection (newer tc releases). */
-export const TC_STORAGE_FULL_EXIT_CODE = 8;
+/**
+ * `tc` exit code for a storage rejection (TC-625). Exit 8 is UNSAFE_FILENAME /
+ * OUTPUT_EXISTS, so it must never be read as storage-full.
+ */
+export const TC_STORAGE_FULL_EXIT_CODE = 10;
 
 const STORAGE_FULL_CODES: Record<string, true> = {
   STORAGE_QUOTA_EXCEEDED: true,
   STORAGE_LIMIT_REACHED: true,
-  STORAGE_FULL: true,
 };
 // Older tc/SDK releases only carry the node's wording.
 const STORAGE_FULL_TEXT =

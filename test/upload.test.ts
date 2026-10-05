@@ -267,7 +267,7 @@ describe("upload", () => {
       }),
       status: 1,
     },
-    { variant: "tc storage exit code", stderr: "rejected", status: 8 },
+    { variant: "tc storage exit code", stderr: "rejected", status: 10 },
   ])(
     "stops at the first storage rejection ($variant) and leaves the rest pending",
     async ({ stderr, status }) => {
@@ -309,35 +309,42 @@ describe("upload", () => {
     },
   );
 
-  test("keeps going after a failure that is not a storage rejection", async () => {
-    const { config, store, shas } = await seedTranscripts(3);
-    const attempted: string[] = [];
-    spawnSync.mockImplementation(((_tc: string, argv: string[]) => {
-      const sha = shas.find((candidate) =>
-        argv.some((arg) => arg.includes(candidate)),
+  test.each([
+    { variant: "network error", status: 6, stderr: "fetch failed" },
+    // tc exits 8 for UNSAFE_FILENAME/OUTPUT_EXISTS, which is not storage-full.
+    { variant: "tc exit 8", status: 8, stderr: "output exists" },
+  ])(
+    "keeps going after a failure that is not a storage rejection ($variant)",
+    async ({ status, stderr }) => {
+      const { config, store, shas } = await seedTranscripts(3);
+      const attempted: string[] = [];
+      spawnSync.mockImplementation(((_tc: string, argv: string[]) => {
+        const sha = shas.find((candidate) =>
+          argv.some((arg) => arg.includes(candidate)),
+        );
+        if (sha && !attempted.includes(sha)) attempted.push(sha);
+        return sha === attempted[1]
+          ? { status, stdout: "", stderr }
+          : { status: 0, stdout: "", stderr: "" };
+      }) as never);
+
+      const result = await uploadPending(config, store, 10, {});
+      const statuses = Object.fromEntries(
+        store.list().map((row) => [row.id, row.status]),
       );
-      if (sha && !attempted.includes(sha)) attempted.push(sha);
-      return sha === attempted[1]
-        ? { status: 6, stdout: "", stderr: "fetch failed" }
-        : { status: 0, stdout: "", stderr: "" };
-    }) as never);
+      store.close();
 
-    const result = await uploadPending(config, store, 10, {});
-    const statuses = Object.fromEntries(
-      store.list().map((row) => [row.id, row.status]),
-    );
-    store.close();
-
-    expect(result).toEqual({
-      uploaded: 2,
-      published: 0,
-      failed: 1,
-      stoppedForStorage: false,
-      remaining: 0,
-    });
-    expect(attempted).toHaveLength(3);
-    expect(statuses[attempted[1]!]).toBe("failed");
-  });
+      expect(result).toEqual({
+        uploaded: 2,
+        published: 0,
+        failed: 1,
+        stoppedForStorage: false,
+        remaining: 0,
+      });
+      expect(attempted).toHaveLength(3);
+      expect(statuses[attempted[1]!]).toBe("failed");
+    },
+  );
 
   test("stops before any recording when the schema migration is rejected for storage", async () => {
     const { config, store } = await seedTranscripts(2);

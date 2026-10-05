@@ -111,7 +111,7 @@ Downsampling is non-destructive. Originals stay in `media/`; smaller derived fil
 
 Use `--source recorder`, `--source voice_memos`, `--source voxterm`, or `--source soundcore_sync` on `status`, `list`, `downsample`, `transcribe`, and `upload` to keep each import workflow scoped. Hyphenated aliases `voice-memos` and `soundcore-sync` are accepted for the snake-case Listen source values, and `--source all` is the default.
 
-If a recording fails to upload, `upload` marks it `failed` and moves on to the next one; failed recordings are retried on the next run. When TinyCloud refuses a write because your storage is full, `upload` stops at that recording instead: it does not try the rest of the batch, leaves every unsaved recording pending (not `failed`), prints how many were left, and exits with status 1. Free up space or upgrade your plan at https://account.tinycloud.xyz/billing, then rerun `upload` to continue.
+If a recording fails to upload, `upload` marks it `failed` and moves on to the next one; failed recordings are retried on the next run. When TinyCloud refuses a write because your storage is full (`tc` exit code 10, a `STORAGE_QUOTA_EXCEEDED`/`STORAGE_LIMIT_REACHED` error code, or the node's "Storage quota exceeded" text from older `tc` releases), `upload` stops at that recording instead: it does not try the rest of the batch, leaves every unsaved recording pending (not `failed`), prints how many were left, and exits with status 1. Free up space or upgrade your plan at https://account.tinycloud.xyz/billing, then rerun `upload` to continue.
 
 ## Recorder cleanup
 
